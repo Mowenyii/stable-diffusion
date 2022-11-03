@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="ba46dccb-af9a-483f-92d8-b7c40101d643" name="inpaint">
+        <fileTransfer accessType="SFTP" host="183.174.229.139" port="5102" sshConfigId="dec08312-c03b-43b5-9a58-9ed461dbf906" sshConfig="wenyi_mo@183.174.229.139:5102 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
