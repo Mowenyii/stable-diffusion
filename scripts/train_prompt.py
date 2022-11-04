@@ -1,4 +1,4 @@
-
+import torch.nn as nn
 import streamlit as st
 from einops import repeat
 # from streamlit_drawable_canvas import st_canvas
@@ -235,7 +235,7 @@ if __name__ == "__main__":
         "--prompt",
         type=str,
         nargs="?",
-        default="A cat run in a field",#"A lion runs in the grassland",#
+        default="right",#"A cat run in a field",#"A lion runs in the grassland",#
         help="the prompt to render"
     )
     opt = parser.parse_args()
@@ -243,6 +243,9 @@ if __name__ == "__main__":
     # ckpt_path="/home/wenyi_mo/stable-diffusion-main/models/ldm/inpainting_big/last.ckpt"
     ckpt_path="/home/wenyi_mo/stable-diffusion-main/models/ldm/inpainting_big/sd-v1-5-inpainting.ckpt"
     sampler = initialize_model(load_path, ckpt_path)
+
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    l2_loss = nn.MSELoss().to(device).eval()
 
     masks = sorted(glob.glob(os.path.join(opt.indir, "*_mask.png")))
     image = [x.replace("_mask.png", ".png") for x in masks]
@@ -263,8 +266,8 @@ if __name__ == "__main__":
 
         seed = 42
         num_samples = 1
-        scale = 5 #不能设太大，否则会全黑
-        ddim_steps = 10 #30
+        scale = 1.5 #不能设太大，否则会全黑
+        ddim_steps = 30 #30
 
         fill_color = "rgba(255, 255, 255, 0.0)"
         stroke_width = 64
@@ -297,7 +300,7 @@ if __name__ == "__main__":
             now = int(time.time())
             timeArr = time.localtime(now)
             other_StyleTime = time.strftime("%m-%d/%H:%M", timeArr)
-            out_dir=out_dir+other_StyleTime+str(prompt)+"_scale"+str(scale) +'/'
+            out_dir=out_dir+other_StyleTime+str(prompt)+"_scale"+str(scale)+"_step"+str(ddim_steps) +'/'
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
 
@@ -311,12 +314,13 @@ if __name__ == "__main__":
                 i=i+1
 
         heat_maps = get_global_heat_map()#(idx=0)
+        #[77,64,64]
+
         #get_global_heat_map(idx=0).shape #TODO 可获得不同时间步的热力图
         for num in range(len(prompt.split(' '))):
 
             mplot = expand_m(heat_maps[num], 1)
-            mask1 = torch.ones_like(mplot)
-            mask1[mplot < 0.5 * mplot.max()] = 0
+
             spotlit_im = torch.tensor(result_tensor[0]).cpu().float().detach()
             # TODO Image.fromarray(result_tensor[0].astype(np.uint8)).save("./b.png")
             # Image.fromarray(spotlit_im.numpy().astype(np.uint8)).save("./b1.png")
@@ -324,7 +328,7 @@ if __name__ == "__main__":
             # spotlit_im2 = torch.cat((spotlit_im, (1 - mplot.squeeze(0)).pow(1)).permute(1, 2, 0), dim=3)
             spotlit_im2 = torch.cat((spotlit_im.permute(2, 0, 1), (mplot.squeeze(0)).pow(1)), dim=0)
             # a=spotlit_im.permute(0, 3, 1, 2) * mask1.squeeze(0)
-            #
+
             # x_sample = 255. * rearrange(a.squeeze(0).cpu().numpy(), 'c h w -> h w c')
             # Image.fromarray(x_sample.astype(np.uint8)).save("./b0.png")
 
@@ -338,10 +342,21 @@ if __name__ == "__main__":
             str_path=out_dir+"soft_"+prompt.split(' ')[num - 1]+".png"
             plt.savefig(str_path)
 
+            # mask1 = torch.ones_like(mplot)
+            # mask1[mplot < 0.5 * mplot.max()] = 0
             # im2=spotlit_im.permute(2, 0, 1) * mask1.squeeze(0)
             # ax.imshow(im2.permute(1, 2, 0).numpy())
             # str_path =out_dir +"hard_"+ prompt.split(' ')[num - 1] + ".png"
             # plt.savefig(str_path)
-        # print("enjoy")
 
+            right_mask = torch.ones((1, 512, 512))
+            right_mask[:, :, :256] = 0
+            im2 = spotlit_im.permute(2, 0, 1) * right_mask.squeeze(0)
+            ax.imshow(im2.permute(1, 2, 0).numpy())
+            str_path =out_dir +"right_mask.png"
+            plt.savefig(str_path)
+
+            now_mask = mplot.squeeze(0)
+
+            #loss
 

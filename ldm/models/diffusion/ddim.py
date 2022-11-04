@@ -7,7 +7,7 @@ from functools import partial
 
 from ldm.modules.diffusionmodules.util import make_ddim_sampling_parameters, make_ddim_timesteps, noise_like, \
     extract_into_tensor
-from ldm.modules.attention import get_global_heat_map, clear_heat_maps,next_heat_map
+
 
 class DDIMSampler(object):
     def __init__(self, model, schedule="linear", **kwargs):
@@ -95,7 +95,7 @@ class DDIMSampler(object):
         C, H, W = shape
         size = (batch_size, C, H, W)
         print(f'Data shape for DDIM sampling is {size}, eta {eta}')
-        # TODO 这里可以加mask？
+
         samples, intermediates = self.ddim_sampling(conditioning, size,
                                                     callback=callback,
                                                     img_callback=img_callback,
@@ -112,8 +112,6 @@ class DDIMSampler(object):
                                                     unconditional_conditioning=unconditional_conditioning,
                                                     )
         return samples, intermediates
-
-
 
     @torch.no_grad()
     def ddim_sampling(self, cond, shape,
@@ -141,16 +139,14 @@ class DDIMSampler(object):
         print(f"Running DDIM Sampling with {total_steps} timesteps")
 
         iterator = tqdm(time_range, desc='DDIM Sampler', total=total_steps)
-        # TODO 这里加mask?
-        for i, step in enumerate(iterator):
 
+        for i, step in enumerate(iterator):
             index = total_steps - i - 1
             ts = torch.full((b,), step, device=device, dtype=torch.long)
-            print("time", i, step,ts)
 
-            if mask is not None:# and (i< (total_steps-5) ): #TODO 好家伙，一开，完全和原图一样
-                # assert x0 is not None #TODO 确定性前向？目前没加噪声，应该用Unet的输出做高斯噪声
-                img_orig = self.model.q_sample_(x0, ts)  # TODO: deterministic forward pass?
+            if mask is not None:
+                assert x0 is not None
+                img_orig = self.model.q_sample(x0, ts)  # TODO: deterministic forward pass?
                 img = img_orig * mask + (1. - mask) * img
 
             outs = self.p_sample_ddim(img, cond, ts, index=index, use_original_steps=ddim_use_original_steps,
@@ -160,27 +156,6 @@ class DDIMSampler(object):
                                       unconditional_guidance_scale=unconditional_guidance_scale,
                                       unconditional_conditioning=unconditional_conditioning)
             img, pred_x0 = outs
-            next_heat_map()
-
-
-            # mask = get_global_heat_map().mean(0)#TODO 选了所有词的mean()，也许要改
-
-
-            if i<5:
-            # if mask==None:
-                mask=get_global_heat_map()[:8].mean(0)/(get_global_heat_map()[:8].max()-get_global_heat_map()[:8].min())
-            # else:
-            #     mask=0.5*mask+0.5*(get_global_heat_map()[:6].mean(0)/(get_global_heat_map()[:6].max()-get_global_heat_map()[:6].min()))
-                # 可不可以soft一点？
-                mask[mask <= mask.mean()] = 0
-                mask[mask > mask.mean()] = 1
-                #
-                mask=mask.to(img.device)
-                if torch.isnan(mask).any():
-                    mask=None
-
-            # else:
-            #     mask = None
             if callback: callback(i)
             if img_callback: img_callback(pred_x0, i)
 
@@ -205,7 +180,7 @@ class DDIMSampler(object):
                 assert isinstance(unconditional_conditioning, dict)
                 c_in = dict()
                 for k in c:
-                    if isinstance(c[k], list):#TODO 加了unconditional 变成（2,77,768）
+                    if isinstance(c[k], list):
                         c_in[k] = [
                             torch.cat([unconditional_conditioning[k][i], c[k][i]])
                             for i in range(len(c[k]))

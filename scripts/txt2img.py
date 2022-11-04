@@ -101,7 +101,7 @@ def main():
         "--prompt",
         type=str,
         nargs="?",
-        default="a painting of a virus monster playing guitar",
+        default="left",#"a painting of a virus monster playing guitar",
         help="the prompt to render"
     )
     parser.add_argument(
@@ -109,7 +109,7 @@ def main():
         type=str,
         nargs="?",
         help="dir to write results to",
-        default="outputs/txt2img-samples"
+        default="../outputs/txt2img-samples"
     )
     parser.add_argument(
         "--skip_grid",
@@ -124,7 +124,7 @@ def main():
     parser.add_argument(
         "--ddim_steps",
         type=int,
-        default=50,
+        default=50,#50,
         help="number of ddim sampling steps",
     )
     parser.add_argument(
@@ -204,13 +204,13 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/stable-diffusion/v1-inference.yaml",
+        default="../configs/stable-diffusion/v1-inference.yaml",
         help="path to config which constructs model",
     )
     parser.add_argument(
         "--ckpt",
         type=str,
-        default="models/ldm/stable-diffusion-v1/model.ckpt",
+        default="/home/wenyi_mo/stable-diffusion-main/models/ldm/stable-diffusion-v1/model.ckpt",
         help="path to checkpoint of model",
     )
     parser.add_argument(

@@ -6,51 +6,7 @@ from torch import nn, einsum
 from einops import rearrange, repeat
 
 from ldm.modules.diffusionmodules.util import checkpoint
-from collections import defaultdict
 
-
-
-heat_maps = defaultdict(list)# 77, (16,55,55)
-all_heat_maps = []
-
-
-def clear_heat_maps():
-    global heat_maps, all_heat_maps
-    heat_maps = defaultdict(list)
-    all_heat_maps = []
-
-
-def next_heat_map():
-    global heat_maps, all_heat_maps
-    all_heat_maps.append(heat_maps)
-    heat_maps = defaultdict(list)
-
-
-def get_global_heat_map(last_n: int = None, idx: int = None, factors=None):
-    global heat_maps, all_heat_maps
-
-    if idx is not None:
-        heat_maps2 = [all_heat_maps[idx]]
-    else:
-        heat_maps2 = all_heat_maps[-last_n:] if last_n is not None else all_heat_maps
-
-    if factors is None:
-        factors = {1, 2, 4, 8, 16, 32}
-
-    all_merges = []
-
-    for heat_map_map in heat_maps2:
-        merge_list = []
-
-        for k, v in heat_map_map.items():
-            if k in factors:
-                merge_list.append(torch.stack(v, 0).mean(0))
-
-        all_merges.append(merge_list)
-    #[10, 4, 77, 16, 64, 64]
-    maps = torch.stack([torch.stack(x, 0) for x in all_merges], dim=0)
-    return maps.sum(0).cuda().sum(2).sum(0)
-    #sum(2)这里把16那维全sum了，包括un-condition
 
 def exists(val):
     return val is not None
@@ -201,10 +157,6 @@ class CrossAttention(nn.Module):
 
         self.scale = dim_head ** -0.5
         self.heads = heads
-        # for slice_size > 0 the attention score computation
-        # is split across the batch axis to save memory
-        # You can set slice_size with `set_attention_slice`
-        self._slice_size = None
 
         self.to_q = nn.Linear(query_dim, inner_dim, bias=False)
         self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
@@ -215,95 +167,14 @@ class CrossAttention(nn.Module):
             nn.Dropout(dropout)
         )
 
-    def reshape_heads_to_batch_dim(self, tensor):
-        batch_size, seq_len, dim = tensor.shape
-        head_size = self.heads
-        tensor = tensor.reshape(batch_size, seq_len, head_size, dim // head_size)
-        tensor = tensor.permute(0, 2, 1, 3).reshape(batch_size * head_size, seq_len, dim // head_size)
-        return tensor
-
-    def reshape_batch_dim_to_heads(self, tensor):
-        batch_size, seq_len, dim = tensor.shape
-        head_size = self.heads
-        tensor = tensor.reshape(batch_size // head_size, head_size, seq_len, dim)
-        tensor = tensor.permute(0, 2, 1, 3).reshape(batch_size // head_size, seq_len, dim * head_size)
-        return tensor
-
-    @torch.no_grad()
-    def _up_sample_attn(self, x, factor, method: str = 'bicubic'):
-        weight = torch.full((factor, factor), 1 / factor ** 2, device=x.device)
-        weight = weight.view(1, 1, factor, factor)
-
-        h = w = int(math.sqrt(x.size(1)))
-        maps = []
-        x = x.permute(2, 0, 1)
-
-        with torch.cuda.amp.autocast(dtype=torch.float32):
-            for map_ in x:
-                map_ = map_.unsqueeze(1).view(map_.size(0), 1, h, w)
-                if method == 'bicubic':
-                    map_ = F.interpolate(map_, size=(64, 64), mode="bicubic", align_corners=False)
-                    maps.append(map_.squeeze(1))
-                else:
-                    maps.append(F.conv_transpose2d(map_, weight, stride=factor).squeeze(1).cpu())
-
-        maps = torch.stack(maps, 0).cpu()
-        return maps
-
-    def _attention(self, query, key, value, sequence_length, dim, use_context: bool = True):
-        batch_size_attention = query.shape[0]
-        hidden_states = torch.zeros(
-            (batch_size_attention, sequence_length, dim // self.heads), device=query.device, dtype=query.dtype
-        )
-        slice_size = self._slice_size if self._slice_size is not None else hidden_states.shape[0]
-        for i in range(hidden_states.shape[0] // slice_size):
-            start_idx = i * slice_size
-            end_idx = (i + 1) * slice_size
-            attn_slice = ( #16,4096,77
-                    torch.einsum("b i d, b j d -> b i j", query[start_idx:end_idx], key[start_idx:end_idx]) * self.scale
-            )
-            factor = int(math.sqrt(4096 // attn_slice.shape[1]))
-            attn_slice = attn_slice.softmax(-1) #取 -1维
-
-            if use_context:
-                if factor >= 1:
-                    factor //= 1
-                    maps = self._up_sample_attn(attn_slice, factor) #第一个有cross-atten的，factor==1
-                    global heat_maps
-                    heat_maps[factor].append(maps)
-                # print(attn_slice.size(), query.size(), key.size(), value.size())
-
-            attn_slice = torch.einsum("b i j, b j d -> b i d", attn_slice, value[start_idx:end_idx])
-
-            hidden_states[start_idx:end_idx] = attn_slice
-
-        # reshape hidden_states
-        hidden_states = self.reshape_batch_dim_to_heads(hidden_states)
-        return hidden_states
-
-
     def forward(self, x, context=None, mask=None):
         h = self.heads
-
-        batch_size, sequence_length, dim = x.shape
-        use_context = context is not None
 
         q = self.to_q(x)
         context = default(context, x)
         k = self.to_k(context)
         v = self.to_v(context)
 
-        q = self.reshape_heads_to_batch_dim(q)# 16,4096,40
-        k = self.reshape_heads_to_batch_dim(k)# 16,77,40
-        v = self.reshape_heads_to_batch_dim(v)
-
-        # TODO(PVP) - mask is currently never used. Remember to re-implement when used
-
-        # attention, what we cannot get enough of
-        hidden_states = self._attention(q, k, v, sequence_length, dim, use_context=use_context)
-
-        return self.to_out(hidden_states)
-        '''
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
 
         sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
@@ -320,8 +191,6 @@ class CrossAttention(nn.Module):
         out = einsum('b i j, b j d -> b i d', attn, v)
         out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
         return self.to_out(out)
-        '''
-
 
 
 class BasicTransformerBlock(nn.Module):
