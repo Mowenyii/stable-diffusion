@@ -101,7 +101,7 @@ def main():
         "--prompt",
         type=str,
         nargs="?",
-        default="left",#"a painting of a virus monster playing guitar",
+        default="a painting of a virus monster playing guitar",
         help="the prompt to render"
     )
     parser.add_argument(
@@ -124,7 +124,7 @@ def main():
     parser.add_argument(
         "--ddim_steps",
         type=int,
-        default=50,#50,
+        default=50,
         help="number of ddim sampling steps",
     )
     parser.add_argument(
