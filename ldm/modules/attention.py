@@ -206,7 +206,14 @@ class BasicTransformerBlock(nn.Module):
         self.checkpoint = checkpoint
 
     def forward(self, x, context=None):
-        return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
+        para = [p for p in self.parameters() if p.requires_grad]  # filter(lambda p: p.requires_grad, self.parameters())
+        if len(para) == 0:  # 没有可学的参数
+            return checkpoint(self._forward, (x, context), para, False)
+        else:
+            for name, value in self.named_parameters():
+                print('name: {0},\t grad: {1}'.format(name, value.requires_grad))
+            return checkpoint(self._forward, (x, context), para, self.checkpoint)
+        # return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
 
     def _forward(self, x, context=None):
         x = self.attn1(self.norm1(x)) + x

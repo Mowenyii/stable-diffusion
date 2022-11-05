@@ -21,6 +21,25 @@ from ldm.data.base import Txt2ImgIterableBaseDataset
 from ldm.util import instantiate_from_config
 
 
+def load_model_from_config(config, ckpt, verbose=False):
+    print(f"Loading model from {ckpt}")
+    pl_sd = torch.load(ckpt, map_location="cpu")
+    if "global_step" in pl_sd:
+        print(f"Global Step: {pl_sd['global_step']}")
+    sd = pl_sd["state_dict"]
+    model = instantiate_from_config(config.model)
+    m, u = model.load_state_dict(sd, strict=False)
+    if len(m) > 0 and verbose:
+        print("missing keys:")
+        print(m)
+    if len(u) > 0 and verbose:
+        print("unexpected keys:")
+        print(u)
+
+    model.cuda()
+    model.eval()
+    return model
+
 def get_parser(**parser_kwargs):
     def str2bool(v):
         if isinstance(v, bool):
@@ -41,6 +60,12 @@ def get_parser(**parser_kwargs):
         default="",
         nargs="?",
         help="postfix for logdir",
+    )
+    parser.add_argument(
+        "--ckpt",
+        type=str,
+        default="/home/wenyi_mo/stable-diffusion-main/models/ldm/stable-diffusion-v1/model.ckpt",#"/home/wenyi_mo/stable-diffusion-main/data/epoch=000010.ckpt",#
+        help="path to checkpoint of model",
     )
     parser.add_argument(
         "-r",
@@ -109,7 +134,7 @@ def get_parser(**parser_kwargs):
         "-l",
         "--logdir",
         type=str,
-        default="../logs",
+        default="./logs",
         help="directory for logging dat shit",
     )
     parser.add_argument(
@@ -531,9 +556,18 @@ if __name__ == "__main__":
         trainer_opt = argparse.Namespace(**trainer_config)
         lightning_config.trainer = trainer_config
 
-        # model
-        model = instantiate_from_config(config.model)
 
+        # model = instantiate_from_config(config.model)
+        model = load_model_from_config(config, f"{opt.ckpt}")#instantiate_from_config(config.model)
+
+        for name, param in model.named_parameters():
+            if ("ctx" in name):
+                param.requires_grad_(True)
+            else:
+                param.requires_grad_(False)
+
+        for name, value in model.named_parameters():
+            print('name: {0},\t grad: {1}'.format(name, value.requires_grad))
         # trainer and callbacks
         trainer_kwargs = dict()
 
