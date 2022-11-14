@@ -1,6 +1,7 @@
 """make variations of input image"""
 
 import argparse, os, sys, glob
+sys.path.append('/home/wenyi_mo/stable-diffusion')
 import PIL
 import torch
 import numpy as np
@@ -22,6 +23,9 @@ from copy import deepcopy
 from ldm.modules.attention import get_global_heat_map, clear_heat_maps, get_rank,edit_rank,clear_rank
 import torch.nn.functional as F
 from collections import defaultdict
+
+
+
 
 # rank=defaultdict(list)
 #
@@ -91,7 +95,7 @@ def main():
         "--prompt",
         type=str,
         nargs="?",
-        default="A photo of a bird spreading wings.",#"A photo of a bird wearing hat",##"A picture of a bird, Monet style.",
+        default="A cute cat eating a birthday cake",#A cereal cake",
         help="the prompt to render"
     )
     parser.add_argument(
@@ -106,7 +110,7 @@ def main():
         type=str,
         nargs="?",
         help="dir to write results to",
-        default="../outputs/img2img-samples"
+        default="../outputs/img2img"
     )
 
     parser.add_argument(
@@ -237,7 +241,7 @@ def main():
     if not opt.from_file:
         prompt = opt.prompt
         assert prompt is not None
-        data = [batch_size * [prompt]]
+        data = [batch_size * [prompt.replace("_"," ")]]
 
     else:
         print(f"reading prompts from {opt.from_file}")
@@ -258,10 +262,6 @@ def main():
     sampler.make_schedule(ddim_num_steps=opt.ddim_steps, ddim_eta=opt.ddim_eta, verbose=False)
 
     assert 0. <= opt.strength <= 1., 'can only work with strength in [0.0, 1.0]'
-    t_enc = int(opt.strength * opt.ddim_steps)
-    print(f"target t_enc is {t_enc} steps")
-
-    #TODO lamb
     lamb=0.7
 
 
@@ -269,7 +269,7 @@ def main():
     with torch.no_grad():
         with precision_scope("cuda"):
             with model.ema_scope():
-                tic = time.time()
+
                 all_samples = list()
                 for n in trange(opt.n_iter, desc="Sampling"):
                     for prompts in tqdm(data, desc="data"):
@@ -278,144 +278,102 @@ def main():
                             uc = model.get_learned_conditioning(batch_size * [""])
                         if isinstance(prompts, tuple):
                             prompts = list(prompts)
+                        print("prompt1",prompts)
                         c = model.get_learned_conditioning(prompts)
                         #TODO get attention map
                         t_enc_begin = int(2)#TODO 改为2
                         # encode (scaled latent)
                         z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc_begin]*batch_size).to(device))
-                        #TODO 清空heat map
+                        # TODO 清空heat_maps
                         clear_heat_maps()
                         # decode it
                         samples = sampler.decode(z_enc, c, t_enc_begin, unconditional_guidance_scale=opt.scale,
                                                  unconditional_conditioning=uc,)
-                        x_samples = model.decode_first_stage(samples)
-                        x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
 
                         heat_maps = get_global_heat_map()
                         #[77, 64, 64]#heat_maps[0].max()124.3595,min 113.3953 其他idx在0.2~1.8之间
-                        for num in range(len(prompt.split(' '))+1):
-                            mplot = expand_m(heat_maps[num], 1)
-
-                            mask = torch.zeros_like(mplot.squeeze(0))
-                            mask[mplot.squeeze(0) < 0.5 * mplot.squeeze(0).max()] = 1
-
-                            mask1 = torch.concat((mask, mask, mask), 0) #三个通道
-                            x_sample = 255. * rearrange(x_samples[0].cpu().numpy(), 'c h w -> h w c')
-                            x_sample1=deepcopy(x_sample)
-                            x_sample1[:, :, :][mask1.permute(1, 2, 0)[:, :, :] > 0] = 255
-                            str_path = "../outputs/img2img-samples1/mask_before"
-                            if not os.path.exists(str_path):
-                                os.makedirs(str_path)
-                            if num==0:
-                                str_path1 = str_path + "/soft_start.png"
-                            else:
-                                str_path1= str_path+"/soft_" + prompt.split(' ')[num - 1] + ".png"
-
-                            plt.imshow(x_sample1.astype(np.uint8))
-                            plt.savefig(str_path1)
-                            plt.close()
 
                         #TODO 也需要另外保存heat_maps
-
-                        for i in range((len(prompt.split(' '))+2)):
-                            if i==0:
-                                print(heat_maps[i].sum(),"start")
-                            elif i>len(prompt.split(' ')):
-                                print(heat_maps[i].sum(),"end")
-                            else:
-                                print(heat_maps[i].sum(),prompt.split(' ')[i-1])
-
-
-                        b=[(-1)*float(heat_maps[i].sum()) for i in range(1,len(prompt.split(' '))+1)]#b去掉了start token
-                        b_sum=np.sum(b)
+                        # for i in range((len(prompt.split(' '))+2)):
+                        #     if i==0:
+                        #         print(heat_maps[i].sum(),"start")
+                        #     elif i>len(prompt.split(' ')):
+                        #         print(heat_maps[i].sum(),"end")
+                        #     else:
+                        #         print(heat_maps[i].sum(),prompt.split(' ')[i-1])
+                        b = [(-1) * float(heat_maps[i].sum()) for i in
+                             range(1, len(prompt.split(' ')) + 1)]  # b去掉了start token
+                        b_sum = np.sum(b)
                         # r_b=[i / b_sum for i in b] #用比率
-                        # TODO 选出前50%的txt emb
+
                         clear_rank()
                         rank = defaultdict(list)
-                        emp_str=""
-                        for i in (np.argsort(b)[int(len(b)*0.5):]):
+                        emp_str = ""
+                        for i in (np.argsort(b)[int(len(b) * 0.5):]):
                             print(prompt.split(' ')[i])
-                            if emp_str=="":
-                                emp_str=prompt.split(' ')[i]
+                            if emp_str == "":
+                                emp_str = prompt.split(' ')[i]
                             else:
-                                emp_str=emp_str+' '+prompt.split(' ')[i]
-                            rank[i+1]=[np.exp(-b[i]/b_sum),heat_maps[i+1]]#+1是start token
+                                emp_str = emp_str + ' ' + prompt.split(' ')[i]
+                            # print(i)
+                            rank[i + 1] = [np.exp(-b[i] / b_sum), heat_maps[i + 1]]  # +1是start token
 
-                        if emp_str!="":
-                            print("emp_str",emp_str)
+                        if emp_str != "":
                             ec = model.get_learned_conditioning(batch_size * [emp_str])
-                            uc = lamb *uc + (1-lamb)*ec
+                            uc = lamb * uc + (1 - lamb) * ec
 
                         edit_rank(rank)
                         # rank=np.argsort(b)[int(len(b)*0.5):]+1 #+1是start token
                         # rank {77中的下标：权重}
                         c_new = deepcopy(c)
                         for i in range(len(rank)):
-                            c_new[:,int(list(rank.keys())[i]),:]=c_new[:,0,:]#换为start token对应的emb
+                            c_new[:, int(list(rank.keys())[i]), :] = c_new[:, 0, :]  # 换为start token对应的emb
 
                         # TODO 清空heat_maps
                         clear_heat_maps()
 
+                        for ii in range(4, 10):
+                            ix = float(0.1 * ii)
 
-                        # encode (scaled latent)
-                        z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device))
-                        # decode it
-                        samples = sampler.decode(z_enc, c_new, t_enc, unconditional_guidance_scale=opt.scale,
-                                                 unconditional_conditioning=uc,)
-
-
-
-                        x_samples = model.decode_first_stage(samples)
-                        x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
-
-                        if not opt.skip_save:
-                            for x_sample in x_samples:
-                                x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
-                                Image.fromarray(x_sample.astype(np.uint8)).save(
-                                    os.path.join(sample_path, f"{base_count:05}.png"))
-                                base_count += 1
-                        all_samples.append(x_samples)
-
-                        # TODO draw attention map
-                        heat_maps = get_global_heat_map()
-                        for num in range(len(prompt.split(' '))+1):
-                            mplot = expand_m(heat_maps[num], 1)
-
-                            mask = torch.zeros_like(mplot.squeeze(0))
-                            mask[mplot.squeeze(0) < 0.5 * mplot.squeeze(0).max()] = 1
-
-                            mask1 = torch.concat((mask, mask, mask), 0) #三个通道
-
-                            x_sample1=deepcopy(x_sample)
-                            x_sample1[:, :, :][mask1.permute(1, 2, 0)[:, :, :] > 0] = 255
-                            str_path = "../outputs/img2img-samples1/mask"
-                            if not os.path.exists(str_path):
-                                os.makedirs(str_path)
-                            if num==0:
-                                str_path1 = str_path + "/soft_start.png"
-                            else:
-                                str_path1= str_path+"/soft_" + prompt.split(' ')[num - 1] + ".png"
-
-                            plt.imshow(x_sample1.astype(np.uint8))
-                            plt.savefig(str_path1)
-                            plt.close()
+                            t_enc = int(ix * opt.ddim_steps)
+                            print(f"target t_enc is {t_enc} steps")
+                            # TODO 选出前50%的txt emb
+                            # encode (scaled latent)
+                            z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device))
+                            # decode it
+                            for jx in range(4,20,2):
+                                # opt.scale=jj
+                                clear_heat_maps()# TODO clean
+                                samples = sampler.decode(z_enc, c_new, t_enc, unconditional_guidance_scale=jx,
+                                                         unconditional_conditioning=uc,)
 
 
-                outpath2 = outpath + "/" + str(grid_count) + "scl" + str(opt.scale) + "sten" + str(
-                    opt.strength) + "_" + str(opt.prompt)
 
-                if not opt.skip_grid:
-                    # additionally, save as grid
-                    grid = torch.stack(all_samples, 0)
-                    grid = rearrange(grid, 'n b c h w -> (n b) c h w')
-                    grid = make_grid(grid, nrow=n_rows)
+                                x_samples = model.decode_first_stage(samples)
+                                x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
 
-                    # to image
-                    grid = 255. * rearrange(grid, 'c h w -> h w c').cpu().numpy()
-                    outpath1 = outpath2 + ".png"
-                    Image.fromarray(grid.astype(np.uint8)).save(outpath1)
-                    # Image.fromarray(grid.astype(np.uint8)).save(os.path.join(outpath, f'grid-{grid_count:04}.png'))
-                    grid_count += 1
+                                if not opt.skip_save:
+                                    for x_sample in x_samples:
+                                        x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
+                                        Image.fromarray(x_sample.astype(np.uint8)).save(
+                                            os.path.join(sample_path, f"{base_count:05}.png"))
+                                        base_count += 1
+                                all_samples.append(x_samples)
+
+                        outpath2 = outpath + "/" + str(grid_count) + "scl" + str(jx) + "sten" + str(ix) + "_" + str(opt.prompt)
+
+                        if not opt.skip_grid:
+                            # additionally, save as grid
+                            grid = torch.stack(all_samples, 0)
+                            grid = rearrange(grid, 'n b c h w -> (n b) c h w')
+                            grid = make_grid(grid, nrow=n_rows)
+
+                            # to image
+                            grid = 255. * rearrange(grid, 'c h w -> h w c').cpu().numpy()
+                            outpath1 = outpath2  + ".png"
+                            Image.fromarray(grid.astype(np.uint8)).save(outpath1)
+                            # Image.fromarray(grid.astype(np.uint8)).save(os.path.join(outpath, f'grid-{grid_count:04}.png'))
+                            grid_count += 1
 
 
 

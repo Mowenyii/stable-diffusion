@@ -8,9 +8,21 @@ from einops import rearrange, repeat
 from ldm.modules.diffusionmodules.util import checkpoint
 from collections import defaultdict
 
+rank=defaultdict(list)
 
+def get_rank():
+    global rank
+    return rank
 
-heat_maps = defaultdict(list)# 77, (16,55,55)
+def edit_rank(r):
+    global rank
+    rank=r
+
+def clear_rank():
+    global rank
+    rank = defaultdict(list)
+
+heat_maps = defaultdict(list)# 77, (16,64,64)
 all_heat_maps = []
 
 
@@ -263,13 +275,34 @@ class CrossAttention(nn.Module):
                     torch.einsum("b i d, b j d -> b i j", query[start_idx:end_idx], key[start_idx:end_idx]) * self.scale
             )
             factor = int(math.sqrt(4096 // attn_slice.shape[1]))
-            attn_slice = attn_slice.softmax(-1) #取 -1维
+            #TODO
+            rank=get_rank()
+            if use_context:
+                global heat_maps
+
+                # before_heat_maps = get_global_heat_map()#77,64,64
+                # 把edit的attention map加进来
+            if use_context and rank != {} and attn_slice.shape[1] == 4096:  # TODO 1024也许其他维度也加
+                for i in range(len(rank)):
+                    k_l=list(rank.keys())
+                    # print(k_l[i],rank[k_l[i]])
+                    if rank[k_l[i]] !=[]:
+                        w=rank[k_l[i]][0]
+                        # print("qwq")
+                        attn_slice[:,:,k_l[i]]=attn_slice[:,:,k_l[i]]+w*rank[k_l[i]][1].flatten()#,然后复制16份
+                #w=rank[3][0]
+                #attn_slice[:,:,3] =attn_slice[:,:,3] + w*rank[3][1].flatten()
+
+                #[16, 4096, 77]
+            # 加个权吧
+            # attn_slice=attn_slice* self.scale
+            attn_slice = attn_slice.softmax(-1) #[16, 4096, 77],取 -1维
 
             if use_context:
                 if factor >= 1:
                     factor //= 1
                     maps = self._up_sample_attn(attn_slice, factor) #第一个有cross-atten的，factor==1
-                    global heat_maps
+                    # global heat_maps
                     heat_maps[factor].append(maps)
                 # print(attn_slice.size(), query.size(), key.size(), value.size())
 
@@ -301,7 +334,7 @@ class CrossAttention(nn.Module):
 
         # attention, what we cannot get enough of
         hidden_states = self._attention(q, k, v, sequence_length, dim, use_context=use_context)
-
+        #[2, 4096, 320]
         return self.to_out(hidden_states)
         '''
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))

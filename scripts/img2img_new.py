@@ -235,7 +235,7 @@ if __name__ == "__main__":
         "--prompt",
         type=str,
         nargs="?",
-        default="A cat run in a field",#"A lion runs in the grassland",#
+        default="a bird wearing a hat",#"A lion runs in the grassland",#
         help="the prompt to render"
     )
     opt = parser.parse_args()

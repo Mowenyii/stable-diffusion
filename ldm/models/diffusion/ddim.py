@@ -152,7 +152,7 @@ class DDIMSampler(object):
                 # assert x0 is not None #TODO 确定性前向？目前没加噪声，应该用Unet的输出做高斯噪声
                 img_orig = self.model.q_sample_(x0, ts)  # TODO: deterministic forward pass?
                 img = img_orig * mask + (1. - mask) * img
-
+            #TODO 不在img加mask，在attention的某一维
             outs = self.p_sample_ddim(img, cond, ts, index=index, use_original_steps=ddim_use_original_steps,
                                       quantize_denoised=quantize_denoised, temperature=temperature,
                                       noise_dropout=noise_dropout, score_corrector=score_corrector,
@@ -166,18 +166,18 @@ class DDIMSampler(object):
             # mask = get_global_heat_map().mean(0)#TODO 选了所有词的mean()，也许要改
 
 
-            if i<5:
-            # if mask==None:
-                mask=get_global_heat_map()[:8].mean(0)/(get_global_heat_map()[:8].max()-get_global_heat_map()[:8].min())
-            # else:
-            #     mask=0.5*mask+0.5*(get_global_heat_map()[:6].mean(0)/(get_global_heat_map()[:6].max()-get_global_heat_map()[:6].min()))
-                # 可不可以soft一点？
-                mask[mask <= mask.mean()] = 0
-                mask[mask > mask.mean()] = 1
-                #
-                mask=mask.to(img.device)
-                if torch.isnan(mask).any():
-                    mask=None
+            # if i<5:
+            # # if mask==None:
+            #     mask=get_global_heat_map()[:8].mean(0)/(get_global_heat_map()[:8].max()-get_global_heat_map()[:8].min())
+            # # else:
+            # #     mask=0.5*mask+0.5*(get_global_heat_map()[:6].mean(0)/(get_global_heat_map()[:6].max()-get_global_heat_map()[:6].min()))
+            #     # 可不可以soft一点？
+            #     mask[mask <= mask.mean()] = 0
+            #     mask[mask > mask.mean()] = 1
+            #     #
+            #     mask=mask.to(img.device)
+            #     if torch.isnan(mask).any():
+            #         mask=None
 
             # else:
             #     mask = None
@@ -278,4 +278,11 @@ class DDIMSampler(object):
             x_dec, _ = self.p_sample_ddim(x_dec, cond, ts, index=index, use_original_steps=use_original_steps,
                                           unconditional_guidance_scale=unconditional_guidance_scale,
                                           unconditional_conditioning=unconditional_conditioning)
+            next_heat_map()
+            mask=None #可以固定为最大的那个
+            x0=None
+            if mask is not None: # ddpm搜mask
+                assert x0 is not None
+                img_orig = self.q_sample(x0, ts)
+                x_dec = img_orig * mask + (1. - x_dec) * x_dec
         return x_dec
