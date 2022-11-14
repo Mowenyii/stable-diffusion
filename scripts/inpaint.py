@@ -56,11 +56,9 @@ if __name__ == "__main__":
     images = [x.replace("_mask.png", ".png") for x in masks]
     print(f"Found {len(masks)} inputs.")
 
-    config = OmegaConf.load("../models/ldm/inpainting_big/config.yaml")
+    config = OmegaConf.load("models/ldm/inpainting_big/config.yaml")
     model = instantiate_from_config(config.model)
-    ckpt_path="/home/wenyi_mo/stable-diffusion-main/models/ldm/inpainting_big/last.ckpt"
-    #"/home/wenyi_mo/stable-diffusion-main/models/ldm/inpainting_big/sd-v1-5-inpainting.ckpt"
-    model.load_state_dict(torch.load(ckpt_path)["state_dict"],
+    model.load_state_dict(torch.load("models/ldm/inpainting_big/last.ckpt")["state_dict"],
                           strict=False)
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")

@@ -136,27 +136,46 @@ class SpatialRescaler(nn.Module):
 
 class FrozenCLIPEmbedder(AbstractEncoder):
     """Uses the CLIP transformer encoder for text (from Hugging Face)"""
-    def __init__(self, version="openai/clip-vit-large-patch14", device="cuda", max_length=77):
+    def __init__(self, version="openai/clip-vit-large-patch14", device="cuda", max_length=77,ctx_init=None):
         super().__init__()
-        self.tokenizer = CLIPTokenizer.from_pretrained(version)
-        self.transformer = CLIPTextModel.from_pretrained(version)
+        self.tokenizer = CLIPTokenizer.from_pretrained(version)#.to(device)
+        self.transformer = CLIPTextModel.from_pretrained(version)#.to(device)
         self.device = device
         self.max_length = max_length
+        # self.ctx = nn.Parameter()
         self.freeze()
+        if ctx_init!=None:
+            # n_ctx = len(ctx_init.split(" "))
+            with torch.no_grad():
+                batch_encoding=self.tokenizer(ctx_init, truncation=True, max_length=self.max_length, return_length=True,
+                                            return_overflowing_tokens=False, padding="max_length", return_tensors="pt")
+                tokens=batch_encoding["input_ids"].to(self.device)
+                self.transformer=self.transformer.cuda()
+                outputs = self.transformer(input_ids=tokens).last_hidden_state
+            self.ctx = nn.Parameter(outputs)#[0, 1 : 1 + n_ctx, :])
+        else:
+            self.ctx=None
 
     def freeze(self):
         self.transformer = self.transformer.eval()
         for param in self.parameters():
             param.requires_grad = False
-
+    # TODO 查看grad
+    # for item in aux_model.named_parameters():
+    #     if item[0] == 'network.4.weight':
+    #         h = item[1].register_hook(lambda grad: print(grad))
     def forward(self, text):
-        batch_encoding = self.tokenizer(text, truncation=True, max_length=self.max_length, return_length=True,
-                                        return_overflowing_tokens=False, padding="max_length", return_tensors="pt")
-        tokens = batch_encoding["input_ids"].to(self.device)
-        outputs = self.transformer(input_ids=tokens)
+        if self.ctx!=None:
+            print("self.ctx",self.ctx.shape,self.ctx.requires_grad, self.ctx[0][0][:10])
+            return self.ctx
+        else:
+            batch_encoding = self.tokenizer(text, truncation=True, max_length=self.max_length, return_length=True,
+                                            return_overflowing_tokens=False, padding="max_length", return_tensors="pt")
+            tokens = batch_encoding["input_ids"].to(self.device)
+            outputs = self.transformer(input_ids=tokens)
 
-        z = outputs.last_hidden_state
-        return z
+            z = outputs.last_hidden_state
+            return z
 
     def encode(self, text):
         return self(text)
