@@ -1,13 +1,18 @@
 """SAMPLING ONLY."""
-
+from einops import rearrange, repeat
 import torch
 import numpy as np
+from PIL import Image
 from tqdm import tqdm
 from functools import partial
-
+from ldm.modules.attention import get_global_heat_map, clear_heat_maps, get_rank,edit_rank,clear_rank
 from ldm.modules.diffusionmodules.util import make_ddim_sampling_parameters, make_ddim_timesteps, noise_like, \
     extract_into_tensor
 from ldm.modules.attention import get_global_heat_map, clear_heat_maps,next_heat_map
+from copy import deepcopy
+from matplotlib import pyplot as plt
+import os
+import time
 
 class DDIMSampler(object):
     def __init__(self, model, schedule="linear", **kwargs):
@@ -260,7 +265,7 @@ class DDIMSampler(object):
                 extract_into_tensor(sqrt_one_minus_alphas_cumprod, t, x0.shape) * noise)
 
     @torch.no_grad()
-    def decode(self, x_latent, cond, t_start, unconditional_guidance_scale=1.0, unconditional_conditioning=None,
+    def decode(self, x_latent, cond, t_start, unconditional_guidance_scale=1.0, unconditional_conditioning=None,x0=None,
                use_original_steps=False):
 
         timesteps = np.arange(self.ddpm_num_timesteps) if use_original_steps else self.ddim_timesteps
@@ -271,18 +276,93 @@ class DDIMSampler(object):
         print(f"Running DDIM Sampling with {total_steps} timesteps")
 
         iterator = tqdm(time_range, desc='Decoding image', total=total_steps)
-        x_dec = x_latent
+        rank = get_rank()
+        mask1 = None  # 可以固定为最大的那个
+        noise=None #固定了每轮的noise mask
+        # x0=None
+        if rank != {} and ('mask' in list(rank.keys())) :#and False:  # and not os.path.exists("./mask1.png"):
+            # print(rank)
+            ratio = rank['mask'][0]
+            mask = rank['mask'][1]
+
+            mask_min = mask.min()
+            mask_max = mask.max()
+            noise = torch.rand(mask.shape[0], mask.shape[1], device=mask.device)
+            mask_norm = (mask - mask_min) / (mask_max - mask_min)
+
+
+            mask1=torch.zeros_like(mask)
+            # mask1[mask_norm <= mask_norm.mean()] = 0 #还是不动比较好
+            mask1[mask_norm > mask_norm.mean()] = 255
+            # 0是黑，要修改的；255是白，要弱保护的
+            # 也许应该可视化一下
+
+            # mask1 = mask1 * noise
+            # m1 = mask1.lt(1-ratio)#包括0和一些
+            # m2 = mask1.gt(ratio)  # 大于ratio的概率为1 ？，
+            # mask1=mask1.masked_fill(m1, 0)
+            # mask1=mask1.masked_fill(~m1, 255)
+
+            # if True:#not os.path.exists("./mask1.png"):
+            mask_view = torch.concat((mask1.unsqueeze(2), mask1.unsqueeze(2), mask1.unsqueeze(2)), 2)  # 4个通道
+            plt.axis('off')  # 去坐标轴
+            plt.xticks([])  # 去 x 轴刻度
+            plt.yticks([])  # 去 y 轴刻度
+            plt.imshow(mask_view.cpu().detach().numpy().astype(np.uint8))
+            plt.savefig("./mask1.png", bbox_inches='tight', pad_inches=0)
+            plt.close()
+            mask1[mask1[:, :] == 255] = 1
+
+        x_dec = deepcopy(x_latent)
         for i, step in enumerate(iterator):
             index = total_steps - i - 1
             ts = torch.full((x_latent.shape[0],), step, device=x_latent.device, dtype=torch.long)
+            if mask1 is not None: # ddpm搜mask
+                assert x0 is not None
+                img_orig = self.model.q_sample(x0, ts)
+                #TODO mask随机，且ratio不变
+                mask11=deepcopy(mask1)
+                noise = torch.rand(mask11.shape[0], mask11.shape[1], device=mask11.device)
+                mask11 = mask11 * noise
+                m1 = mask11.lt(1 - ratio)#max((1 - ratio),(1-float(1.0*index/total_steps))))  # 小于0.8的 包括0和一些
+                mask11 = mask11.masked_fill(m1, 0)
+                mask11 = mask11.masked_fill(~m1, 1)#1)
+                x_dec = img_orig * mask11 + (1. - mask11) * x_dec
+
+                #TODO mask_ratio减小
+                #min(float(1.0*index/total_steps) ,ratio) #1-ratio比1效果好，越小越靠x_dec
+
+                # noise = torch.rand(mask1.shape[0], mask1.shape[1], device=mask1.device)
+                # mask1 = mask1 * noise
+                # m1 = mask1.lt((1 - ratio))  # 小于0.8的 包括0和一些
+                # mask1 = mask1.masked_fill(m1, 0)
+                # mask1 = mask1.masked_fill(~m1, 1)
+                # x_dec = img_orig * mask1 + (1. - mask1) * x_dec
+
+                # 可视化mask1
+                tic = time.time()
+                mask3 = deepcopy(mask11)
+                mask3[mask3[:,:]==1]=255
+                mask_view = torch.concat((mask3.unsqueeze(2), mask3.unsqueeze(2), mask3.unsqueeze(2)), 2)  # 4个通道
+                plt.axis('off')  # 去坐标轴
+                plt.xticks([])  # 去 x 轴刻度
+                plt.yticks([])  # 去 y 轴刻度
+                plt.imshow(mask_view.cpu().detach().numpy().astype(np.uint8))
+                mask_path="./mask/"
+                os.makedirs(mask_path, exist_ok=True)
+                plt.savefig(mask_path+str(tic)+".png", bbox_inches='tight', pad_inches=0)
+                plt.close()
+
+
+            #x_dec已根据epis恢复成z_0
             x_dec, _ = self.p_sample_ddim(x_dec, cond, ts, index=index, use_original_steps=use_original_steps,
                                           unconditional_guidance_scale=unconditional_guidance_scale,
                                           unconditional_conditioning=unconditional_conditioning)
             next_heat_map()
-            mask=None #可以固定为最大的那个
-            x0=None
-            if mask is not None: # ddpm搜mask
-                assert x0 is not None
-                img_orig = self.q_sample(x0, ts)
-                x_dec = img_orig * mask + (1. - x_dec) * x_dec
+            x_samples =  self.model.decode_first_stage(x_dec)
+            x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
+            x_sample = 255. * rearrange(x_samples[0].cpu().numpy(), 'c h w -> h w c')
+            Image.fromarray(x_sample.astype(np.uint8)).save("./{base_count:05}.png")
+            # 可视化一下latent space
+
         return x_dec

@@ -23,6 +23,13 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="hujie@192.168.20.6:22 (2)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="hujie@192.168.20.6:22 password">
         <serverdata>
           <mappings>
@@ -84,6 +91,9 @@
           <mappings>
             <mapping deploy="/home/wenyi_mo/stable-diffusion" local="$PROJECT_DIR$" web="/" />
           </mappings>
+          <excludedPaths>
+            <excludedPath path="/home/wenyi_mo/stable-diffusion/FashionIQ_VAL/target_samples" />
+          </excludedPaths>
         </serverdata>
       </paths>
       <paths name="open_clip">

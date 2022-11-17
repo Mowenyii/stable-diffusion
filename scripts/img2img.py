@@ -311,9 +311,13 @@ def main():
                             else:
                                 str_path1= str_path+"/soft_" + prompt.split(' ')[num - 1] + ".png"
 
+                            plt.axis('off')  # 去坐标轴
+                            plt.xticks([])  # 去 x 轴刻度
+                            plt.yticks([])  # 去 y 轴刻度
                             plt.imshow(x_sample1.astype(np.uint8))
-                            plt.savefig(str_path1)
+                            plt.savefig(str_path1, bbox_inches='tight', pad_inches=0)
                             plt.close()
+
 
                         #TODO 也需要另外保存heat_maps
 
@@ -396,8 +400,11 @@ def main():
                             else:
                                 str_path1= str_path+"/soft_" + prompt.split(' ')[num - 1] + ".png"
 
+                            plt.axis('off')  # 去坐标轴
+                            plt.xticks([])  # 去 x 轴刻度
+                            plt.yticks([])  # 去 y 轴刻度
                             plt.imshow(x_sample1.astype(np.uint8))
-                            plt.savefig(str_path1)
+                            plt.savefig(str_path1, bbox_inches='tight', pad_inches=0)
                             plt.close()
 
 

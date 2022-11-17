@@ -91,7 +91,7 @@ def main():
         "--prompt",
         type=str,
         nargs="?",
-        default="A cute cat eating a birthday cake",#"A photo of a bird wearing hat",##"A picture of a bird, Monet style.",
+        default="A cute cat eating a birthday cake",#"A photo of a cat wearing glasses",#"A photo of a bird wearing hat",##"A picture of a bird, Monet style.",
         help="the prompt to render"
     )
     parser.add_argument(
@@ -254,7 +254,8 @@ def main():
     init_image = load_img(opt.init_img).to(device)
     init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
     init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_image))  # move to latent space
-
+    img_ori = Image.open(opt.init_img).convert("RGB")
+    img_ori = np.array(img_ori).astype(np.uint8)
     sampler.make_schedule(ddim_num_steps=opt.ddim_steps, ddim_eta=opt.ddim_eta, verbose=False)
 
     assert 0. <= opt.strength <= 1., 'can only work with strength in [0.0, 1.0]'
@@ -265,7 +266,7 @@ def main():
     lamb=0.7
 
     for la in range(1):
-        lamb= 0.7#float(0.1*la)
+        # lamb= float(0.1*la)
         precision_scope = autocast if opt.precision == "autocast" else nullcontext
         with torch.no_grad():
             with precision_scope("cuda"):
@@ -286,6 +287,7 @@ def main():
                             z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc_begin]*batch_size).to(device))
                             #TODO 清空heat map
                             clear_heat_maps()
+                            clear_rank()
                             # decode it
                             samples = sampler.decode(z_enc, c, t_enc_begin, unconditional_guidance_scale=opt.scale,
                                                      unconditional_conditioning=uc,)
@@ -294,6 +296,7 @@ def main():
 
                             heat_maps = get_global_heat_map()
                             #[77, 64, 64]#heat_maps[0].max()124.3595,min 113.3953 其他idx在0.2~1.8之间
+                            mask_list=[]
                             for num in range(len(prompt.split(' '))+1):
                                 mplot = expand_m(heat_maps[num], 1)
 
@@ -302,22 +305,55 @@ def main():
 
                                 mask1 = torch.concat((mask, mask, mask), 0) #三个通道
                                 x_sample = 255. * rearrange(x_samples[0].cpu().numpy(), 'c h w -> h w c')
-                                x_sample1=deepcopy(x_sample)
-                                x_sample1[:, :, :][mask1.permute(1, 2, 0)[:, :, :] > 0] = 0
-                                str_path = "../outputs/img2img-samples1/mask_before"
+                                # x_sample1=deepcopy(x_sample)
+                                # x_sample1[:, :, :][mask1.permute(1, 2, 0)[:, :, :] > 0] = 0
+                                str_path = outpath + "/mask_before"
                                 if not os.path.exists(str_path):
                                     os.makedirs(str_path)
-                                if num==0:
-                                    str_path1 = str_path + "/soft_start.png"
-                                else:
-                                    str_path1= str_path+"/soft_" + prompt.split(' ')[num - 1] + ".png"
+                                # if num==0:
+                                #     str_path1 = str_path + "/soft_start.png"
+                                # else:
+                                #     str_path1= str_path+"/soft_" + prompt.split(' ')[num - 1] + ".png"
+                                # plt.axis('off')  # 去坐标轴
+                                # plt.xticks([])  # 去 x 轴刻度
+                                # plt.yticks([])  # 去 y 轴刻度
+                                # plt.imshow(x_sample1.astype(np.uint8))
+                                # plt.savefig(str_path1, bbox_inches='tight', pad_inches=0)
+                                # plt.close()
+                                mask2 = deepcopy(mplot.squeeze(0))
+                                mask2_min = mask2.min()
+                                mask2_max = mask2.max()
+                                mask_norm = (mask2 - mask2_min) / (mask2_max - mask2_min)
+                                mask2[mask_norm <= mask_norm.mean()] = 0
+                                mask2[mask_norm > mask_norm.mean()] = 255
+                                # 0是黑，255是白
+                                # 也许应该可视化一下
+                                mask_view = torch.concat((mask2, mask2, mask2), 0).permute(1, 2, 0)
+                                mask_list.append(mask_view)
                                 plt.axis('off')  # 去坐标轴
                                 plt.xticks([])  # 去 x 轴刻度
                                 plt.yticks([])  # 去 y 轴刻度
-                                plt.imshow(x_sample1.astype(np.uint8))
-                                plt.savefig(str_path1)
+                                if num == 0:
+                                    str_path_mask = str_path + "/black_mask_start.png"
+                                else:
+                                    str_path_mask = str_path + "/black_mask_" + prompt.split(' ')[num - 1] + ".png"
+                                plt.imshow(mask_view.cpu().detach().numpy().astype(np.uint8))
+                                plt.savefig(str_path_mask, bbox_inches='tight', pad_inches=0)
                                 plt.close()
 
+                                x_sample2 = deepcopy(x_sample)
+                                x_sample2[:, :, :][mask_view[:, :, :] == 0] = 0
+                                # str_path = "../outputs/img2img-samples1/mask"
+                                if num == 0:
+                                    str_path2 = str_path + "/A_soft_start.png"
+                                else:
+                                    str_path2 = str_path + "/A_soft_" + prompt.split(' ')[num - 1] + ".png"
+                                plt.axis('off')  # 去坐标轴
+                                plt.xticks([])  # 去 x 轴刻度
+                                plt.yticks([])  # 去 y 轴刻度
+                                plt.imshow(x_sample2.astype(np.uint8))
+                                plt.savefig(str_path2, bbox_inches='tight', pad_inches=0)
+                                plt.close()
                             #TODO 也需要另外保存heat_maps
 
                             for i in range((len(prompt.split(' '))+2)):
@@ -328,28 +364,29 @@ def main():
                                 else:
                                     print(heat_maps[i].sum(),prompt.split(' ')[i-1])
 
-
-                            b=[(-1)*float(heat_maps[i].sum()) for i in range(1,len(prompt.split(' '))+1)]#b去掉了start token
+                            b=[float(heat_maps[i].sum()) for i in range(1,len(prompt.split(' '))+1)]#b去掉了start token
                             b_sum=np.sum(b)
                             # r_b=[i / b_sum for i in b] #用比率
                             # for i in range((len(prompt.split(' ')))):
                             #     print(np.exp(-b[i]/b_sum),prompt.split(' ')[i-1])
                             for i in range((len(prompt.split(' ')))):
-                                print(np.exp(-b[i]/b_sum),prompt.split(' ')[i])
+                                print((b[i]/b_sum),prompt.split(' ')[i])
                             # TODO 选出前50%的txt emb
-                            clear_rank()
+                            # clear_rank()
                             rank = defaultdict(list)
                             emp_str=""
-                            for i in (np.argsort(b)[int(len(b)*0.5):]):
-                                print(prompt.split(' ')[i],np.exp(-b[i]/b_sum))
+                            rank["mask"] = [(b[np.argmax(b)]/b_sum), heat_maps[np.argmax(b)+1]]
+                            #TODO ec有用吗
+                            for i in (np.argsort(b)[:-1]):#[:int(len(b)*0.5)]
+                                print(prompt.split(' ')[i],b[i]/b_sum)
                                 if emp_str=="":
                                     emp_str=prompt.split(' ')[i]
                                 else:
                                     emp_str=emp_str+' '+prompt.split(' ')[i]
 
-                                rank[i+1]=[np.exp(-b[i]/b_sum),heat_maps[i+1]]#+1是start token
+                                # rank[i+1]=[np.exp(-b[i]/b_sum),heat_maps[i+1]]#+1是start token
 
-                            if emp_str!="":
+                            if True or emp_str!="":
                                 print("emp_str",emp_str)
                                 ec = model.get_learned_conditioning(batch_size * [emp_str])
                                 uc = lamb *uc + (1-lamb)*ec
@@ -358,8 +395,8 @@ def main():
                             # rank=np.argsort(b)[int(len(b)*0.5):]+1 #+1是start token
                             # rank {77中的下标：权重}
                             c_new = deepcopy(c)
-                            for i in range(len(rank)):
-                                c_new[:,int(list(rank.keys())[i]),:]=c_new[:,0,:]#换为start token对应的emb
+                            # for i in range(len(rank)):
+                            #     c_new[:,int(list(rank.keys())[i]),:]=c_new[:,0,:]#换为start token对应的emb
 
                             # TODO 清空heat_maps
                             clear_heat_maps()
@@ -368,7 +405,7 @@ def main():
                             # encode (scaled latent)
                             z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device))
                             # decode it
-                            samples = sampler.decode(z_enc, c_new, t_enc, unconditional_guidance_scale=opt.scale,
+                            samples = sampler.decode(z_enc, c_new, t_enc, x0=init_latent,unconditional_guidance_scale=opt.scale,
                                                      unconditional_conditioning=uc,)
 
 
@@ -391,25 +428,73 @@ def main():
 
                                 mask = torch.zeros_like(mplot.squeeze(0))
                                 mask[mplot.squeeze(0) < 0.5 * mplot.squeeze(0).max()] = 1
-
                                 mask1 = torch.concat((mask, mask, mask), 0) #三个通道
-
+                                mask_view = mask_list[num]
                                 x_sample1=deepcopy(x_sample)
                                 x_sample1[:, :, :][mask1.permute(1, 2, 0)[:, :, :] > 0] = 0
-                                str_path = "../outputs/img2img-samples1/mask"
+                                str_path = outpath + "/mask"
                                 if not os.path.exists(str_path):
                                     os.makedirs(str_path)
-                                if num==0:
-                                    str_path1 = str_path + "/soft_start.png"
-                                else:
-                                    str_path1= str_path+"/soft_" + prompt.split(' ')[num - 1] + ".png"
+                                # if num==0:
+                                #     str_path1 = str_path + "/soft_start.png"
+                                # else:
+                                #     str_path1= str_path+"/soft_" + prompt.split(' ')[num - 1] + ".png"
+                                # plt.axis('off')  # 去坐标轴
+                                # plt.xticks([])  # 去 x 轴刻度
+                                # plt.yticks([])  # 去 y 轴刻度
+                                # plt.imshow(x_sample1.astype(np.uint8))
+                                # plt.savefig(str_path1, bbox_inches='tight', pad_inches=0)
+                                # plt.close()
+
+                                mask2 = deepcopy(mplot.squeeze(0))
+                                mask2_min = mask2.min()
+                                mask2_max = mask2.max()
+                                mask_norm = (mask2 - mask2_min) / (mask2_max - mask2_min)
+                                mask2[mask_norm <= mask_norm.mean()] = 0
+                                mask2[mask_norm > mask_norm.mean()] = 255
+                                # 0是黑，255是白
+                                # 也许应该可视化一下
+                                # mask_view = torch.concat((mask2, mask2, mask2), 0).permute(1, 2, 0)
                                 plt.axis('off')  # 去坐标轴
                                 plt.xticks([])  # 去 x 轴刻度
                                 plt.yticks([])  # 去 y 轴刻度
-                                plt.imshow(x_sample1.astype(np.uint8))
-                                plt.savefig(str_path1)
+                                if num == 0:
+                                    str_path_mask = str_path + "/black_mask_start.png"
+                                else:
+                                    str_path_mask = str_path + "/black_mask_" + prompt.split(' ')[num - 1] + ".png"
+                                plt.imshow(mask_view.cpu().detach().numpy().astype(np.uint8))
+                                plt.savefig(str_path_mask, bbox_inches='tight', pad_inches=0)
                                 plt.close()
 
+                                x_sample2 = deepcopy(x_sample)
+                                x_sample2[:, :, :][mask_view[:, :, :] == 0] = 0
+                                # str_path = "../outputs/img2img-samples1/mask"
+                                if num == 0:
+                                    str_path2 = str_path + "/A_soft_start.png"
+                                else:
+                                    str_path2 = str_path + "/A_soft_" + prompt.split(' ')[num - 1] + ".png"
+                                plt.axis('off')  # 去坐标轴
+                                plt.xticks([])  # 去 x 轴刻度
+                                plt.yticks([])  # 去 y 轴刻度
+                                plt.imshow(x_sample2.astype(np.uint8))
+                                plt.savefig(str_path2, bbox_inches='tight', pad_inches=0)
+                                plt.close()
+
+                                #TODO 插值
+                                x_sample3 = deepcopy(x_sample)
+                                mask3 = mask_view.cpu().detach().numpy()
+                                mask3[mask3[:, :, :] == 255] = 1
+                                a = x_sample3 * (1 - mask3) + (mask3) * img_ori
+                                if num == 0:
+                                    str_path3 = str_path + "/inter_start.png"
+                                else:
+                                    str_path3 = str_path + "/inter_" + prompt.split(' ')[num - 1] + ".png"
+                                plt.axis('off')  # 去坐标轴
+                                plt.xticks([])  # 去 x 轴刻度
+                                plt.yticks([])  # 去 y 轴刻度
+                                plt.imshow(a.astype(np.uint8))
+                                plt.savefig(str_path3, bbox_inches='tight', pad_inches=0)
+                                plt.close()
 
                     outpath2 = outpath + "/" + str(grid_count) + "scl" + str(opt.scale) + "sten" + str(
                         opt.strength) + "_" + str(opt.prompt)+ "_"+str(lamb)
