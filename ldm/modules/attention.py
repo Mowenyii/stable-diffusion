@@ -276,13 +276,13 @@ class CrossAttention(nn.Module):
             )
             factor = int(math.sqrt(4096 // attn_slice.shape[1]))
             #TODO
-            # rank=get_rank()
+            rank=get_rank()
             if use_context:
                 global heat_maps
 
                 # before_heat_maps = get_global_heat_map()#77,64,64
                 # 把edit的attention map加进来
-            if use_context and rank != {} and attn_slice.shape[1] == 4096 and ('mask' not in list(rank.keys())) and False:  # TODO 1024也许其他维度也加
+            if use_context and rank != {} and attn_slice.shape[1] == 4096 and ('mask' not in list(rank.keys())) :#and False:  # TODO 1024也许其他维度也加
                 for i in range(len(rank)):
                     k_l=list(rank.keys())
                     # print(k_l[i],rank[k_l[i]])

@@ -3,7 +3,7 @@ from omegaconf import OmegaConf
 from torch.utils.data import Dataset, DataLoader
 from torchvision.utils import save_image
 from einops import rearrange
-
+# from collections import defaultdict
 from torch.utils.data import Dataset
 from torchvision import transforms
 import json
@@ -15,16 +15,16 @@ import torch
 import numpy as np
 from omegaconf import OmegaConf
 from PIL import Image
-
+import jieba
 from itertools import islice
 from einops import rearrange, repeat
 
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from contextlib import nullcontext
-
+import clip
 from pytorch_lightning import seed_everything
-
+import pandas as pd
 sys.path.append('/home/wenyi_mo/stable-diffusion-main')
 
 from ldm.util import instantiate_from_config
@@ -43,6 +43,8 @@ from collections import defaultdict
 # def get_rank():
 #     global rank
 #     return rank
+
+stopwords=["A","a","an","the","of","in","on","with","by","for","at","about","under","is","am","are","Is","Am","Are"]#,"and","or"
 
 def expand_m(m, n: int = 1, o=512, mode='bicubic'):
     m = m.unsqueeze(0).unsqueeze(0) / n
@@ -103,8 +105,8 @@ class FashionIQ(Dataset):
                     continue
                 query['source_id'] = asin2id[query['candidate']]
                 query['target_id'] = asin2id[query['target']]
-                query['captions_s'] ="A photo of clothes. " + query['captions'][0]
-                query['captions_t'] ="A photo of clothes. " +  query['captions'][1]
+                query['captions_s'] = "A photo of clothes " +query['captions'][0]#"A photo of clothes. " +
+                query['captions_t'] = "A photo of clothes " +query['captions'][1]#
                 # 转str
                 # query['captions'] = [c.encode('utf-8') for c in query['captions']]
                 queries += [query]
@@ -417,6 +419,7 @@ def main():
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = model.to(device)
 
+    clip_model, preprocess = clip.load("ViT-L/14", device=device, jit=False)
 
     sampler = DDIMSampler(model)
 
@@ -426,7 +429,7 @@ def main():
     batch_size = opt.n_samples
 
     sample_path = os.path.join(outpath, "stable_samples")
-    print(sample_path)
+    # print(sample_path)
     os.makedirs(sample_path, exist_ok=True)
     sample_path_ours = os.path.join(outpath, "ours_samples")
     os.makedirs(sample_path_ours, exist_ok=True)
@@ -444,112 +447,191 @@ def main():
     val_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     step = 0
-    lamb=0.6
+    lamb=0.4
+    la_len=11
+    clip_score=defaultdict(lambda: 0)
+    stable_score = defaultdict(lambda: 0)
+    show_FID = False
     for epoch in range(1):
         for i, example in enumerate(val_loader):
-            # x[3,224,224] x_emb[1,768]
-            # x = example["image"].to(device)
+            for la in range(la_len):
+                lamb = float(0.1 * la)
+                seed_everything(opt.seed)
+                # x[3,224,224] x_emb[1,768]
+                # x = example["image"].to(device)
 
-            # x_emb = x_emb.to(device)
-            init_image = load_img(example["img_path"][0]).to(device)
-            init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
-            init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_image))  # move to latent space
-
-
-            sampler.make_schedule(ddim_num_steps=opt.ddim_steps, ddim_eta=opt.ddim_eta, verbose=False)
-
-            assert 0. <= opt.strength <= 1., 'can only work with strength in [0.0, 1.0]'
-            t_enc = int(opt.strength * opt.ddim_steps)
-            print(f"target t_enc is {t_enc} steps")
-
-            precision_scope = autocast if opt.precision == "autocast" else nullcontext
+                # x_emb = x_emb.to(device)
+                init_image = load_img(example["img_path"][0]).to(device)
+                init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
+                init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_image))  # move to latent space
 
 
-            with torch.no_grad():
-                with precision_scope("cuda"):
-                    with model.ema_scope():
+                sampler.make_schedule(ddim_num_steps=opt.ddim_steps, ddim_eta=opt.ddim_eta, verbose=False)
+
+                assert 0. <= opt.strength <= 1., 'can only work with strength in [0.0, 1.0]'
+                t_enc = int(opt.strength * opt.ddim_steps)
+                print(f"target t_enc is {t_enc} steps")
+
+                precision_scope = autocast if opt.precision == "autocast" else nullcontext
 
 
-                        prompts=example["caption"]
-                        uc = None
-                        if opt.scale != 1.0:
-                            uc = model.get_learned_conditioning(batch_size * [""]) #unconditional
-                        if isinstance(prompts, tuple):
-                            prompts = list(prompts)
-                        c = model.get_learned_conditioning(prompts) #经过了CLIP #[bs,77,768]
-
-                        clear_heat_maps()
-                        # encode (scaled latent)
-                        z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device))
-                        # decode it  #ddim的decode->p_sample_ddim
-                        samples = sampler.decode(z_enc, c, t_enc, unconditional_guidance_scale=opt.scale,
-                                                 unconditional_conditioning=uc,)
-                        heat_maps = get_global_heat_map()
-                        b=[(-1)*float(heat_maps[i].sum()) for i in range(1,len(prompts[0].split(' '))+1)]#b去掉了start token
-                        b_sum=np.sum(b)
-                        # r_b=[i / b_sum for i in b] #用比率
-                        # TODO 选出前50%的txt emb
-                        clear_rank()
-                        rank = defaultdict(list)
-                        emp_str=""
-                        for i in (np.argsort(b)[int(len(b)*0.5):]):
-                            print(prompts[0].split(' ')[i])
-                            if emp_str=="":
-                                emp_str=prompts[0].split(' ')[i]
-                            else:
-                                emp_str=emp_str+' '+prompts[0].split(' ')[i]
-                            rank[i+1]=[np.exp(-b[i]/b_sum),heat_maps[i+1]]#+1是start token
-
-                        if emp_str!="":
-                            print("emp_str",emp_str)
-                            ec = model.get_learned_conditioning(batch_size * [emp_str])
-                            uc_ours=deepcopy(uc)
-                            uc_ours = lamb *uc_ours + (1-lamb)*ec
-
-                        edit_rank(rank)
-                        c_new = deepcopy(c)
-                        for i in range(len(rank)):
-                            c_new[:,int(list(rank.keys())[i]),:]=c_new[:,0,:]
-                        clear_heat_maps()
-
-                        x_samples = model.decode_first_stage(samples)
-                        x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
+                with torch.no_grad():
+                    with precision_scope("cuda"):
+                        with model.ema_scope():
 
 
-                        if not opt.skip_save:
-                            for x_sample in x_samples:
-                                x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
-                                Image.fromarray(x_sample.astype(np.uint8)).save(
-                                    os.path.join(sample_path, f"{base_count:05}.png"))
-                                target_image = Image.open(example["t_path"][0]).convert("RGB")
-                                target_image = target_image.resize((512, 512), resample=PIL.Image.LANCZOS)
-                                target_image.save(os.path.join(target_path, f"{base_count:05}.png"))
-                                # base_count += 1
+                            prompts=example["caption"]
+                            uc = None
+                            if opt.scale != 1.0:
+                                uc = model.get_learned_conditioning(batch_size * [""]) #unconditional
+                            if isinstance(prompts, tuple):
+                                prompts = list(prompts)
+                            c = model.get_learned_conditioning(prompts) #经过了CLIP #[bs,77,768]
 
-                        # encode (scaled latent)
-                        # z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device))
-                        # decode it
-                        samples_ours = sampler.decode(z_enc, c_new, t_enc, unconditional_guidance_scale=opt.scale,
-                                                 unconditional_conditioning=uc,)
+                            clear_heat_maps()
+                            # encode (scaled latent)
+                            t_enc_begin=int(2)
+                            z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc_begin]*batch_size).to(device))
+                            # decode it  #ddim的decode->p_sample_ddim
+                            samples = sampler.decode(z_enc, c, t_enc_begin, unconditional_guidance_scale=opt.scale,
+                                                     unconditional_conditioning=uc,)
+                            heat_maps = get_global_heat_map()
+                            b=[float(heat_maps[i].sum()/(64*64)) for i in range(1,len(prompts[0].split(' '))+1)]#b去掉了start token
+                            b_exp = np.exp(b)
+                            # 如果是列向量，则axis=0
+                            b_sum = np.sum(b_exp, axis=0, keepdims=True)
+                            b_weight = b_exp / b_sum
+                            print("prompts", prompts)
+                            for ij in range((len(prompts[0].split(' ')))):
+                                print(b_weight[ij],prompts[0].split(' ')[ij])
+
+                            # TODO 选出前50%的txt emb
+                            clear_rank()
+                            rank = defaultdict(list)
+
+                            emp_str=""#[int(len(b)*0.5):] 20.5625,[1:]20.328125,[:-1]18.953125,[:int(len(b)*0.5)] 16.4375 ,b[:-1]20.375,b[int(len(b)*0.5):] 20.71875
+                            #[:-1]lam↑sc↓
+                            for ij in (np.argsort(b)[:-1]):#[:int(len(b)*0.5)]#b[:-1]   #[int(len(b)*0.5):]
+                                print("?",prompts[0].split(' ')[ij],b_weight[ij],b[ij]/b_sum)
+                                if prompts[0].split(' ')[ij] not in stopwords:
+                                    if emp_str=="":
+                                        emp_str=prompts[0].split(' ')[ij]
+                                    else:
+                                        emp_str=emp_str+' '+prompts[0].split(' ')[ij]
+                                    rank[ij+1]=[b_weight[ij],heat_maps[ij+1]]
+
+                            # 上[int(len(b)*0.5):]下[:int(len(b)*0.5)]17.84375，反过来19.96875
+                            # 最相关的前50%
+                            # for ij in (np.argsort(b)[:-1]):#[1:] [int(len(b)*0.5):]
+                            #     if prompts[0].split(' ')[ij] not in stopwords:
+                            #         print("rank",prompts[0].split(' ')[ij])
+                            #         rank[ij + 1] = [b_weight[ij], heat_maps[ij + 1]]
+
+                            if emp_str!="":
+                                print("emp_str",emp_str)
+                                ec = model.get_learned_conditioning(batch_size * [emp_str])
+                                uc_ours=deepcopy(uc)
+                                uc = lamb *uc_ours + (1-lamb)*ec
+
+                            edit_rank(rank)
+                            c_new = deepcopy(c)
+                            # for ij in range(len(rank)):
+                            #     c_new[:,int(list(rank.keys())[ij]),:]=c_new[:,0,:]#或者只用最大的那个词
+                            # max_idx=np.argmax(b_weight)
+                            # c_new = model.get_learned_conditioning(batch_size * [prompts[0].split(' ')[max_idx]])
+                            clear_heat_maps()
+
+                            x_samples = model.decode_first_stage(samples)
+                            x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
+
+
+                            if not opt.skip_save and show_FID:
+                                for x_sample in x_samples:
+                                    x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
+                                    if show_FID:
+                                        Image.fromarray(x_sample.astype(np.uint8)).save(
+                                            os.path.join(sample_path, f"{base_count:05}.png")) #这是stable diffusion的
+                                    target_image = Image.open(example["t_path"][0]).convert("RGB")
+                                    target_image = target_image.resize((512, 512), resample=PIL.Image.LANCZOS)
+                                    target_image.save(os.path.join(target_path, f"{base_count:05}.png"))
+                                    #TODO 计算CLIP得分
+                                    image_input = preprocess(Image.fromarray(x_sample.astype(np.uint8))).unsqueeze(0).to(device)
+                                    text_inputs = clip.tokenize(prompts[0]).to(device)
+
+                                    # Calculate features
+                                    with torch.no_grad():
+                                        image_features = clip_model.encode_image(image_input)
+                                        text_features = clip_model.encode_text(text_inputs)
+
+                                    # Pick the top 5 most similar labels for the image
+                                    image_features /= image_features.norm(dim=-1, keepdim=True)
+                                    text_features /= text_features.norm(dim=-1, keepdim=True)
+                                    similarity = (100.0 * image_features @ text_features.T)
+                                    print("similarity", similarity.item())
+                                    stable_score[lamb] = stable_score[lamb]+similarity
+                                    print(stable_score)
+                                    # base_count += 1
+
+                            # encode (scaled latent)
+                            # z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device))
+                            # decode it
+                            samples_ours = sampler.decode(z_enc, c_new, t_enc, unconditional_guidance_scale=opt.scale,
+                                                     unconditional_conditioning=uc,)
 
 
 
-                        x_samples_ours = model.decode_first_stage(samples_ours)
-                        x_samples_ours = torch.clamp((x_samples_ours + 1.0) / 2.0, min=0.0, max=1.0)
+                            x_samples_ours = model.decode_first_stage(samples_ours)
+                            x_samples_ours = torch.clamp((x_samples_ours + 1.0) / 2.0, min=0.0, max=1.0)
 
-                        if not opt.skip_save:
-                            for x_sample in x_samples_ours:
-                                x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
-                                Image.fromarray(x_sample.astype(np.uint8)).save(
-                                    os.path.join(sample_path_ours, f"{base_count:05}.png"))
-                                base_count += 1
+                            if not opt.skip_save :#and show_FID:
+                                for x_sample in x_samples_ours:
+                                    x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
+                                    if show_FID:
+                                        Image.fromarray(x_sample.astype(np.uint8)).save(
+                                            os.path.join(sample_path_ours, f"{base_count:05}.png"))
+                                    #TODO 计算CLIP得分
+                                    image_input = preprocess(Image.fromarray(x_sample.astype(np.uint8))).unsqueeze(0).to(device)
+                                    text_inputs = clip.tokenize(prompts[0]).to(device)
 
-                        if step>0:#4998:#step>0 两个结果，0和1
-                            break
-                        step += 1
+                                    # Calculate features
+                                    with torch.no_grad():
+                                        image_features = clip_model.encode_image(image_input)
+                                        text_features = clip_model.encode_text(text_inputs)
+
+                                    # Pick the top 5 most similar labels for the image
+                                    image_features /= image_features.norm(dim=-1, keepdim=True)
+                                    text_features /= text_features.norm(dim=-1, keepdim=True)
+                                    similarity = (100.0 * image_features @ text_features.T)
+                                    print("similarity", similarity.item())
+                                    clip_score[lamb] = clip_score[lamb]+similarity
+                                    print(clip_score)
+
+                                    base_count += 1
+
+                print("step,lamb", step, lamb)
+            if step>-1:#4998:#step>0 两个结果，0和1
+                break
+
+            step += 1
+
+                # clip_score[lamb]=1.0*clip_score[lamb] #/opt.n_samples
+        print("clip_score",clip_score)
+        df=pd.read_csv("./r.csv")
+        for i in range(la_len):
+            ii=0.1*i
+            # ii=lamb
+            df.loc[len(df)] = [ii,clip_score[ii].item()/(step+1)]#.item()
+            df.to_csv("./r.csv",index=False)
+
+        # df_s=pd.read_csv("./s.csv")
+        # for i in range(la_len):
+        #     # ii=0.1*i
+        #     ii=lamb
+        #     df_s.loc[len(df)] = [ii,stable_score[ii].item()/(step+1)]#.item()
+        #     df_s.to_csv("./s.csv",index=False)
 
 
-
+#0.5 no att 16.5156
 
 if __name__ == "__main__":
     main()
