@@ -437,7 +437,7 @@ def main():
 
 
     #TODO lamb
-    lamb=0.4#0.7
+    lamb=0.99#0.7
     show_mask=False
     step = 0
     clip_score=defaultdict(lambda: 0)

@@ -45,7 +45,7 @@ from collections import defaultdict
 #     global rank
 #     return rank
 
-stopwords=["A","a","an","the","of","in","on","with","by","for","at","about","under","is","am","are","Is","Am","Are"]#,"and","or"
+stopwords=[]#["A","a","an","the","of","in","on","with","by","for","at","about","under","is","am","are","Is","Am","Are"]#,"and","or"
 
 def expand_m(m, n: int = 1, o=512, mode='bicubic'):
     m = m.unsqueeze(0).unsqueeze(0) / n
@@ -312,7 +312,7 @@ def main():
         type=str,
         nargs="?",
         help="dir to write results to",
-        default="./FashionIQ_VAL_sample/"
+        default="./FashionIQ_VAL/"
     )
 
     parser.add_argument(
@@ -456,7 +456,6 @@ def main():
     start = time.time()
     for epoch in range(1):
         for i, example in enumerate(val_loader):
-            seed_everything(opt.seed)
             init_image = load_img(example["img_path"][0]).to(device)
             init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
             init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_image))  # move to latent space
@@ -519,7 +518,7 @@ def main():
                                 image_features /= image_features.norm(dim=-1, keepdim=True)
                                 text_features /= text_features.norm(dim=-1, keepdim=True)
                                 similarity = (100.0 * image_features @ text_features.T)
-                                print("stable similarity", similarity.item())
+                                print("similarity", similarity.item())
                                 stable_score[lamb] = stable_score[lamb]+similarity
                                 print(stable_score)
 
@@ -543,14 +542,14 @@ def main():
 
                             emp_str=""#[int(len(b)*0.5):] 20.5625,[1:]20.328125,[:-1]18.953125,[:int(len(b)*0.5)] 16.4375 ,b[:-1]20.375,b[int(len(b)*0.5):] 20.71875
                             #[:-1]lam↑sc↓
-                            for ij in (np.argsort(b)[:int(len(b)*0.5)]):#[:int(len(b)*0.5)]#b[:-1]   #[int(len(b)*0.5):]
+                            for ij in (np.argsort(b)[:-1]):#[:int(len(b)*0.5)]#b[:-1]   #[int(len(b)*0.5):]
                                 print("?",prompts[0].split(' ')[ij],b_weight[ij],b[ij]/b_sum)
                                 if prompts[0].split(' ')[ij] not in stopwords:
                                     if emp_str=="":
                                         emp_str=prompts[0].split(' ')[ij]
                                     else:
                                         emp_str=emp_str+' '+prompts[0].split(' ')[ij]
-                                    # rank[ij+1]=[b_weight[ij],heat_maps[ij+1]]
+                                    rank[ij+1]=[b_weight[ij],heat_maps[ij+1]]
 
                             # 上[int(len(b)*0.5):]下[:int(len(b)*0.5)]17.84375，反过来19.96875
                             # 最相关的前50%
@@ -560,10 +559,10 @@ def main():
                             #         rank[ij + 1] = [b_weight[ij], heat_maps[ij + 1]]
 
                             uc_ours = deepcopy(uc)
-                            # if emp_str!="":
-                            #     print("emp_str",emp_str)
-                            #     ec = model.get_learned_conditioning(batch_size * [emp_str])
-                            #     uc_ours = lamb *uc_ours + (1-lamb)*ec
+                            if emp_str!="":
+                                print("emp_str",emp_str)
+                                ec = model.get_learned_conditioning(batch_size * [emp_str])
+                                uc_ours = lamb *uc_ours + (1-lamb)*ec
 
                             edit_rank(rank)
                             c_new = deepcopy(c)
@@ -612,34 +611,34 @@ def main():
                 # df_s = pd.read_csv("./s.csv")
                 # df_s.loc[len(df_s)] = [lamb, stable_score[lamb].item() / (step + 1)]  # .item()
                 # df_s.to_csv("./s.csv", index=False)
-            if step>8:#98 #4998:#step>0 两个结果，0和1
+            if step>98:#98 #4998:#step>0 两个结果，0和1
                 break
 
             step += 1
 
                 # clip_score[lamb]=1.0*clip_score[lamb] #/opt.n_samples
         print("clip_score",clip_score)
-        df=pd.read_csv("./r.csv")
-        for i in range(la_len):
-            # ii=0.1*i
-            ii=lamb
-            df.loc[len(df)] = [ii,clip_score[ii].item()/(step+1)]#.item()
-            df.to_csv("./r.csv",index=False)
+        # df=pd.read_csv("./r.csv")
+        # for i in range(la_len):
+        #     # ii=0.1*i
+        #     ii=lamb
+        #     df.loc[len(df)] = [ii,clip_score[ii].item()/(step+1)]#.item()
+        #     df.to_csv("./r.csv",index=False)
+        #
+        # df_s=pd.read_csv("./s.csv")
+        # for i in range(la_len):
+        #     # ii=0.1*i
+        #     ii=lamb
+        #     df_s.loc[len(df_s)] = [ii,stable_score[ii].item()/(step+1)]#.item()
+        #     df_s.to_csv("./s.csv",index=False)
 
-        df_s=pd.read_csv("./s.csv")
-        for i in range(la_len):
-            # ii=0.1*i
-            ii=lamb
-            df_s.loc[len(df_s)] = [ii,stable_score[ii].item()/(step+1)]#.item()
-            df_s.to_csv("./s.csv",index=False)
-
-        df_s=pd.read_csv("./result.csv")
+        df_s=pd.read_csv("./result1.csv")
         for i in range(la_len):
             # ii=0.1*i
             ii=lamb
             df_s.loc[len(df_s)] = ["stable",step,ii,stable_score[ii].item()/(step+1)]#.item()
             df_s.loc[len(df_s)] = ["ours", step, ii,clip_score[ii].item() / (step + 1)]
-            df_s.to_csv("./result.csv",index=False)
+            df_s.to_csv("./result1.csv",index=False)
 
     end = time.time()
     runTime = end - start
