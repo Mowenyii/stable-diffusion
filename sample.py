@@ -543,23 +543,39 @@ def main():
 
                             emp_str=""#[int(len(b)*0.5):] 20.5625,[1:]20.328125,[:-1]18.953125,[:int(len(b)*0.5)] 16.4375 ,b[:-1]20.375,b[int(len(b)*0.5):] 20.71875
                             #[:-1]lam↑sc↓
-                            for ij in (np.argsort(b)[:int(len(b)*0.5)]):#[:int(len(b)*0.5)]#b[:-1]   #[int(len(b)*0.5):]
+                            emp_list=[]
+                            #TODO 以前的lam方案
+                            for ij in (np.argsort(b)[int(len(b)*0.5):]):#[:int(len(b)*0.5)]#b[:-1]   #[int(len(b)*0.5):]
                                 print("?",prompts[0].split(' ')[ij],b_weight[ij],b[ij]/b_sum)
                                 if prompts[0].split(' ')[ij] not in stopwords:
+                                    emp_list.append(prompts[0].split(' ')[ij])
                                     if emp_str=="":
                                         emp_str=prompts[0].split(' ')[ij]
                                     else:
                                         emp_str=emp_str+' '+prompts[0].split(' ')[ij]
                                     # rank[ij+1]=[b_weight[ij],heat_maps[ij+1]]
-
-                            # 上[int(len(b)*0.5):]下[:int(len(b)*0.5)]17.84375，反过来19.96875
-                            # 最相关的前50%
-                            # for ij in (np.argsort(b)[:-1]):#[1:] [int(len(b)*0.5):]
-                            #     if prompts[0].split(' ')[ij] not in stopwords:
-                            #         print("rank",prompts[0].split(' ')[ij])
-                            #         rank[ij + 1] = [b_weight[ij], heat_maps[ij + 1]]
+                            #TODO 现在的guidance
+                            edit_con=None
+                            # edit_prompt=prompts[0]
+                            edit_prompt=""
+                            for ij in prompts[0].split(' '):
+                                if ij not in emp_list and ij not in stopwords:
+                                    if edit_prompt=="":
+                                        edit_prompt=edit_prompt+ij
+                                    else:
+                                        edit_prompt=edit_prompt+' '+ij
+                            print("edit_prompt",edit_prompt)
+                            edit_con=model.get_learned_conditioning(batch_size * [edit_prompt])
+                            #TODO att inject
+                            # [:-1]是除了cat的词
+                            for ij in (np.argsort(b)[:-1]):#[1:] [int(len(b)*0.5):]
+                                if prompts[0].split(' ')[ij] not in stopwords:
+                                    print("rank",prompts[0].split(' ')[ij])
+                                    rank[ij + 1] = [b_weight[ij], heat_maps[ij + 1]]
 
                             uc_ours = deepcopy(uc)
+                            #TODO 为了保持语序
+
                             # if emp_str!="":
                             #     print("emp_str",emp_str)
                             #     ec = model.get_learned_conditioning(batch_size * [emp_str])
@@ -572,7 +588,7 @@ def main():
                             z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device))
                             # decode it
                             samples_ours = sampler.decode(z_enc, c_new, t_enc,unconditional_guidance_scale=opt.scale,
-                                                     unconditional_conditioning=uc_ours,)
+                                                     unconditional_conditioning=uc_ours,edit_con=edit_con)
 
 
 
@@ -612,7 +628,7 @@ def main():
                 # df_s = pd.read_csv("./s.csv")
                 # df_s.loc[len(df_s)] = [lamb, stable_score[lamb].item() / (step + 1)]  # .item()
                 # df_s.to_csv("./s.csv", index=False)
-            if step>8:#98 #4998:#step>0 两个结果，0和1
+            if step>1498:#98 #4998:#step>0 两个结果，0和1
                 break
 
             step += 1
