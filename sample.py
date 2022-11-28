@@ -106,8 +106,8 @@ class FashionIQ(Dataset):
                     continue
                 query['source_id'] = asin2id[query['candidate']]
                 query['target_id'] = asin2id[query['target']]
-                query['captions_s'] = "A photo of clothes " +query['captions'][0]#"A photo of clothes. " +
-                query['captions_t'] = "A photo of clothes " +query['captions'][1]#
+                query['captions_s'] = query['captions'][0]#"A photo of clothes. " +
+                query['captions_t'] = query['captions'][1]#
                 # 转str
                 # query['captions'] = [c.encode('utf-8') for c in query['captions']]
                 queries += [query]
@@ -430,10 +430,9 @@ def main():
     batch_size = opt.n_samples
 
     sample_path = os.path.join(outpath, "stable_samples")
-    # print(sample_path)
     os.makedirs(sample_path, exist_ok=True)
-    sample_path_ours = os.path.join(outpath, "ours_samples")
-    os.makedirs(sample_path_ours, exist_ok=True)
+    # sample_path_ours = os.path.join(outpath, "ours_samples")
+    # os.makedirs(sample_path_ours, exist_ok=True)
     target_path= os.path.join(outpath, "target_samples")
     os.makedirs(target_path, exist_ok=True)
     base_count = len(os.listdir(sample_path))
@@ -448,7 +447,7 @@ def main():
     val_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     step = 0
-    lamb=0.99
+    lamb=0.95
     la_len=1
     clip_score=defaultdict(lambda: 0)
     stable_score = defaultdict(lambda: 0)
@@ -501,7 +500,7 @@ def main():
                                                  unconditional_conditioning=uc,)
                         x_samples = model.decode_first_stage(samples)
                         x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
-                        if not opt.skip_save and show_FID:
+                        if not opt.skip_save and show_FID and False:
                             for x_sample in x_samples:
                                 x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
                                 if show_FID:
@@ -520,13 +519,15 @@ def main():
                                 text_features /= text_features.norm(dim=-1, keepdim=True)
                                 similarity = (100.0 * image_features @ text_features.T)
                                 print("stable similarity", similarity.item())
-                                stable_score[lamb] = stable_score[lamb]+similarity
+                                stable_score[0] = stable_score[0]+similarity
                                 print(stable_score)
 
                         heat_maps = get_global_heat_map()
                         for la in range(la_len):
                             seed_everything(opt.seed)
                             # lamb = float(0.1 * la)
+                            sample_path_ours = os.path.join(outpath, "ours_lamb" + str(lamb))
+                            os.makedirs(sample_path_ours, exist_ok=True)
                             # ours 计算rank
                             b=[float(heat_maps[i].sum()/(64*64)) for i in range(1,len(prompts[0].split(' '))+1)]#b去掉了start token
                             b_exp = np.exp(b)
@@ -545,9 +546,9 @@ def main():
                             #[:-1]lam↑sc↓
                             emp_list=[]
                             #TODO 以前的lam方案
-                            for ij in (np.argsort(b)[int(len(b)*0.5):]):#[:int(len(b)*0.5)]#b[:-1]   #[int(len(b)*0.5):]
-                                print("?",prompts[0].split(' ')[ij],b_weight[ij],b[ij]/b_sum)
+                            for ij in (np.argsort(b)[:-1]):#[:int(len(b)*0.5)]#b[:-1]   #[int(len(b)*0.5):]
                                 if prompts[0].split(' ')[ij] not in stopwords:
+                                    print("?", prompts[0].split(' ')[ij], b_weight[ij], b[ij] / b_sum)
                                     emp_list.append(prompts[0].split(' ')[ij])
                                     if emp_str=="":
                                         emp_str=prompts[0].split(' ')[ij]
@@ -559,15 +560,16 @@ def main():
                             # edit_prompt=prompts[0]
                             edit_prompt=""
                             for ij in prompts[0].split(' '):
-                                if ij not in emp_list and ij not in stopwords:
+                                if ij not in emp_list :# and ij not in stopwords: #TODO 这里保证了一下edit_prompt不为空，明天要实验下
                                     if edit_prompt=="":
                                         edit_prompt=edit_prompt+ij
                                     else:
                                         edit_prompt=edit_prompt+' '+ij
-                            print("edit_prompt",edit_prompt)
+                            print("emp_str",emp_str)
+                            print("edit_prompt",edit_prompt)# 经常为空
                             edit_con=model.get_learned_conditioning(batch_size * [edit_prompt])
                             #TODO att inject
-                            # [:-1]是除了cat的词
+                            # [:-1]是除了cat的词,修改的词
                             for ij in (np.argsort(b)[:-1]):#[1:] [int(len(b)*0.5):]
                                 if prompts[0].split(' ')[ij] not in stopwords:
                                     print("rank",prompts[0].split(' ')[ij])
@@ -583,12 +585,15 @@ def main():
 
                             edit_rank(rank)
                             c_new = deepcopy(c)
+                            #TODO 另一半，别了，效果太烂了
+                            # c_new=model.get_learned_conditioning(batch_size * [emp_str])
+
                             # encode (scaled latent)
                             #TODO 为什么要注释这个，加 x0=init_latent是因为用来做mask,
                             z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device))
                             # decode it
                             samples_ours = sampler.decode(z_enc, c_new, t_enc,unconditional_guidance_scale=opt.scale,
-                                                     unconditional_conditioning=uc_ours,edit_con=edit_con)
+                                                     unconditional_conditioning=uc_ours,edit_con=edit_con,edit_guidance_scale=lamb)
 
 
 
@@ -620,7 +625,7 @@ def main():
 
                                     base_count += 1
 
-                # print("step,lamb", step, lamb)
+            print("step,lamb", step, lamb)
                 # df = pd.read_csv("./r.csv")
                 # df.loc[len(df)] = [lamb, clip_score[lamb].item() / (step + 1)]  # .item()
                 # df.to_csv("./r.csv", index=False)
@@ -628,33 +633,34 @@ def main():
                 # df_s = pd.read_csv("./s.csv")
                 # df_s.loc[len(df_s)] = [lamb, stable_score[lamb].item() / (step + 1)]  # .item()
                 # df_s.to_csv("./s.csv", index=False)
-            if step>1498:#98 #4998:#step>0 两个结果，0和1
+            if step>498:#98 #4998:#step>0 两个结果，0和1
                 break
 
-            step += 1
+            step =step+ 1
 
                 # clip_score[lamb]=1.0*clip_score[lamb] #/opt.n_samples
         print("clip_score",clip_score)
-        df=pd.read_csv("./r.csv")
-        for i in range(la_len):
-            # ii=0.1*i
-            ii=lamb
-            df.loc[len(df)] = [ii,clip_score[ii].item()/(step+1)]#.item()
-            df.to_csv("./r.csv",index=False)
-
-        df_s=pd.read_csv("./s.csv")
-        for i in range(la_len):
-            # ii=0.1*i
-            ii=lamb
-            df_s.loc[len(df_s)] = [ii,stable_score[ii].item()/(step+1)]#.item()
-            df_s.to_csv("./s.csv",index=False)
+        # df=pd.read_csv("./r.csv")
+        # for i in range(la_len):
+        #     ii=0.1*i
+        #     # ii=lamb
+        #     df.loc[len(df)] = [ii,clip_score[ii].item()/(step+1)]#.item()
+        #     df.to_csv("./r.csv",index=False)
+        #
+        # df_s=pd.read_csv("./s.csv")
+        # for i in range(la_len):
+        #     ii=0.1*i
+        #     # ii=lamb
+        #     df_s.loc[len(df_s)] = [ii,stable_score[ii].item()/(step+1)]#.item()
+        #     df_s.to_csv("./s.csv",index=False)
 
         df_s=pd.read_csv("./result.csv")
+        # df_s.loc[len(df_s)] = ["stable", step, 0, stable_score[0].item() / (step + 1)]
         for i in range(la_len):
             # ii=0.1*i
             ii=lamb
-            df_s.loc[len(df_s)] = ["stable",step,ii,stable_score[ii].item()/(step+1)]#.item()
-            df_s.loc[len(df_s)] = ["ours", step, ii,clip_score[ii].item() / (step + 1)]
+            #.item()
+            df_s.loc[len(df_s)] = ["ours", step, ii,clip_score[ii].item() / (step)]
             df_s.to_csv("./result.csv",index=False)
 
     end = time.time()

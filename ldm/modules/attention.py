@@ -282,7 +282,7 @@ class CrossAttention(nn.Module):
 
                 # before_heat_maps = get_global_heat_map()#77,64,64
                 # 把edit的attention map加进来
-            beta=0.8#[-1,1]
+            beta=0.1#[-1,1]
             if use_context and rank != {} and attn_slice.shape[1] == 4096 and ('mask' not in list(rank.keys())) :#and False : # TODO 1024也许其他维度也加
                 for i in range(len(rank)):
                     k_l=list(rank.keys())

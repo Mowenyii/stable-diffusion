@@ -198,7 +198,7 @@ class DDIMSampler(object):
     @torch.no_grad()
     def p_sample_ddim(self, x, c, t, index, repeat_noise=False, use_original_steps=False, quantize_denoised=False,
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
-                      unconditional_guidance_scale=1., unconditional_conditioning=None,edit_con=None):
+                      unconditional_guidance_scale=1., unconditional_conditioning=None,edit_con=None,edit_guidance_scale=None):
         b, *_, device = *x.shape, x.device
 
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
@@ -213,9 +213,9 @@ class DDIMSampler(object):
                 e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
             elif result.shape[0]==3:
                 e_t_uncond,e_t_edit, e_t = result.chunk(3)
-                edit_beta=0.95
+                edit_beta=edit_guidance_scale#0.95
                 e_t_mid=edit_beta*e_t+(1-edit_beta)*e_t_edit
-                e_t = e_t_uncond + unconditional_guidance_scale * (e_t_mid - e_t_uncond)
+                e_t = e_t_uncond + unconditional_guidance_scale * (e_lt_mid - e_t_uncond)
         else:
             x_in = torch.cat([x] * 2)
             t_in = torch.cat([t] * 2)
@@ -279,7 +279,7 @@ class DDIMSampler(object):
 
     @torch.no_grad()
     def decode(self, x_latent, cond, t_start, unconditional_guidance_scale=1.0, unconditional_conditioning=None,x0=None,
-               use_original_steps=False,edit_con=None):
+               use_original_steps=False,edit_con=None,edit_guidance_scale=None):
 
         timesteps = np.arange(self.ddpm_num_timesteps) if use_original_steps else self.ddim_timesteps
         timesteps = timesteps[:t_start]
@@ -370,7 +370,7 @@ class DDIMSampler(object):
             #x_dec已根据epis恢复成z_0
             x_dec, _ = self.p_sample_ddim(x_dec, cond, ts, index=index, use_original_steps=use_original_steps,
                                           unconditional_guidance_scale=unconditional_guidance_scale,
-                                          unconditional_conditioning=unconditional_conditioning,edit_con=edit_con)
+                                          unconditional_conditioning=unconditional_conditioning,edit_con=edit_con,edit_guidance_scale=edit_guidance_scale)
             next_heat_map()
             x_samples =  self.model.decode_first_stage(x_dec)
             x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
