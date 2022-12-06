@@ -214,8 +214,8 @@ class DDIMSampler(object):
             elif result.shape[0]==3:
                 e_t_uncond,e_t_edit, e_t = result.chunk(3)
                 edit_beta=edit_guidance_scale#0.95
-                e_t_mid=edit_beta*e_t+(1-edit_beta)*e_t_edit
-                e_t = e_t_uncond + unconditional_guidance_scale * (e_lt_mid - e_t_uncond)
+                e_t_mid=edit_beta*e_t+(1-edit_beta)*e_t_edit # edit_beta*e_t+
+                e_t = e_t_uncond + unconditional_guidance_scale * (e_t_mid - e_t_uncond)
         else:
             x_in = torch.cat([x] * 2)
             t_in = torch.cat([t] * 2)

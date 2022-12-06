@@ -35,7 +35,7 @@ from torch import autocast
 import open_clip
 from matplotlib import pyplot as plt
 from copy import deepcopy
-from ldm.modules.attention import get_global_heat_map, clear_heat_maps, get_rank,edit_rank,clear_rank
+from ldm.modules.attention import get_global_heat_map, clear_heat_maps, get_rank,edit_rank,clear_rank,clear_edit_beta,edit_edit_beta
 import torch.nn.functional as F
 from collections import defaultdict
 
@@ -312,7 +312,7 @@ def main():
         type=str,
         nargs="?",
         help="dir to write results to",
-        default="./FashionIQ_VAL_sample/"
+        default="./FashionIQ_sample/"
     )
 
     parser.add_argument(
@@ -447,7 +447,7 @@ def main():
     val_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     step = 0
-    lamb=0.95
+    lamb=0.9
     la_len=1
     clip_score=defaultdict(lambda: 0)
     stable_score = defaultdict(lambda: 0)
@@ -525,8 +525,10 @@ def main():
                         heat_maps = get_global_heat_map()
                         for la in range(la_len):
                             seed_everything(opt.seed)
-                            # lamb = float(0.1 * la)
-                            sample_path_ours = os.path.join(outpath, "ours_lamb" + str(lamb))
+                            clear_edit_beta()
+                            beta_edit = -0.25 #float((la-4)*0.25)#float(0.1 * la)
+                            edit_edit_beta(beta_edit)
+                            sample_path_ours = os.path.join(outpath, "ours_beta" + str(beta_edit))#lamb
                             os.makedirs(sample_path_ours, exist_ok=True)
                             # ours 计算rank
                             b=[float(heat_maps[i].sum()/(64*64)) for i in range(1,len(prompts[0].split(' '))+1)]#b去掉了start token
@@ -620,12 +622,14 @@ def main():
                                     text_features /= text_features.norm(dim=-1, keepdim=True)
                                     similarity = (100.0 * image_features @ text_features.T)
                                     print("similarity", similarity.item())
-                                    clip_score[lamb] = clip_score[lamb]+similarity
+                                    # clip_score[lamb] = clip_score[lamb]+similarity
+
+                                    clip_score[beta_edit] = clip_score[beta_edit] + similarity
                                     print(clip_score)
 
                                     base_count += 1
 
-            print("step,lamb", step, lamb)
+            print("step,lamb,clip_score", step, lamb,clip_score)
                 # df = pd.read_csv("./r.csv")
                 # df.loc[len(df)] = [lamb, clip_score[lamb].item() / (step + 1)]  # .item()
                 # df.to_csv("./r.csv", index=False)
@@ -633,10 +637,11 @@ def main():
                 # df_s = pd.read_csv("./s.csv")
                 # df_s.loc[len(df_s)] = [lamb, stable_score[lamb].item() / (step + 1)]  # .item()
                 # df_s.to_csv("./s.csv", index=False)
-            if step>498:#98 #4998:#step>0 两个结果，0和1
+            step = step + 1
+            if step>499: #99  #98 #4998:#step>0 两个结果，0和1
                 break
 
-            step =step+ 1
+
 
                 # clip_score[lamb]=1.0*clip_score[lamb] #/opt.n_samples
         print("clip_score",clip_score)
@@ -658,7 +663,8 @@ def main():
         # df_s.loc[len(df_s)] = ["stable", step, 0, stable_score[0].item() / (step + 1)]
         for i in range(la_len):
             # ii=0.1*i
-            ii=lamb
+            ii=-0.25#float((i-4)*0.25)
+            # ii=lamb
             #.item()
             df_s.loc[len(df_s)] = ["ours", step, ii,clip_score[ii].item() / (step)]
             df_s.to_csv("./result.csv",index=False)

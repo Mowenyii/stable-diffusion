@@ -9,6 +9,11 @@ from ldm.modules.diffusionmodules.util import checkpoint
 from collections import defaultdict
 
 rank=defaultdict(list)
+edit_beta=0.0
+
+def get_edit_beta():
+    global edit_beta
+    return edit_beta
 
 def get_rank():
     global rank
@@ -17,6 +22,13 @@ def get_rank():
 def edit_rank(r):
     global rank
     rank=r
+
+def edit_edit_beta(b):
+    global edit_beta
+    edit_beta=b
+
+def clear_edit_beta():
+    global edit_beta
 
 def clear_rank():
     global rank
@@ -282,15 +294,17 @@ class CrossAttention(nn.Module):
 
                 # before_heat_maps = get_global_heat_map()#77,64,64
                 # 把edit的attention map加进来
-            beta=0.1#[-1,1]
+            global edit_beta
+            # beta=0.1#[-1,1]
             if use_context and rank != {} and attn_slice.shape[1] == 4096 and ('mask' not in list(rank.keys())) :#and False : # TODO 1024也许其他维度也加
+                print("edit_beta",edit_beta)
                 for i in range(len(rank)):
                     k_l=list(rank.keys())
                     # print(k_l[i],rank[k_l[i]])
                     if rank[k_l[i]] !=[]:
                         w=rank[k_l[i]][0]
                         # print("qwq")
-                        attn_slice[:,:,k_l[i]]=attn_slice[:,:,k_l[i]]+beta*w*rank[k_l[i]][1].flatten()#,然后复制16份
+                        attn_slice[:,:,k_l[i]]=attn_slice[:,:,k_l[i]]+edit_beta*w*rank[k_l[i]][1].flatten()#,然后复制16份
                 #w=rank[3][0]
                 #attn_slice[:,:,3] =attn_slice[:,:,3] + w*rank[3][1].flatten()
 
